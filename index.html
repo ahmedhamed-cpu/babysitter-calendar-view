@@ -438,5 +438,67 @@
   });
 
 </script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, onSnapshot, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // ⚠️ CHOOSE YOUR EXACT CREDENTIALS FROM YOUR FIREBASE SETTINGS GEAR ICON
+    const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "babysitter-calendar-view.firebaseapp.com",
+        projectId: "babysitter-calendar-view",
+        storageBucket: "babysitter-calendar-view.appspot.com",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // ─── BABY SITTER COLOR PALETTE DIRECTORY ─────────────────────────
+    const nurseColors = {
+        "Catherin Fernandez": "#3b82f6", "Jelly Orque": "#ec4899", "Greeshma Babu": "#a855f7",
+        "Noha Abbas": "#f59e0b", "Fatma Mohamed": "#10b981", "Taysir Ali": "#0ea5e9",
+        "May Joy": "#f43f5e", "Mary Cris Cansica": "#8b5cf6", "Asmaliya Dica Disoma": "#f97316",
+        "Zeinab Mohamed": "#06b6d4", "Aya Mlhem": "#3b82f6", "Salma Awaad": "#ec4899",
+        "Anhar Mohamed": "#a855f7", "Enas Salah": "#f59e0b", "Mahmoud Fawzy": "#10b981",
+        "Rofaida Fadul": "#0ea5e9", "Vanessa Gonzales": "#f43f5e", "Rosalie L Cane": "#8b5cf6",
+        "Warda Inog Zacaria": "#f97316", "Kristy Rosales": "#06b6d4", "Mary Donna Manjares Valdez": "#3b82f6",
+        "Salvacion Dumaya Blam": "#ec4899", "Mahomud Amin": "#a855f7", "Aml Rabie": "#f59e0b",
+        "Maurelle Acob": "#10b981", "Dhyana Breeze Catalma": "#0ea5e9", "Mylene Limgas Malan": "#f43f5e",
+        "Angelita C. Valdez": "#8b5cf6", "Rechelle Tarrobago Abina": "#f97316", "Florevel Tigle Inicial": "#06b6d4",
+        "Jazmen A. Daliasen": "#3b82f6", "Theresa A. Moscoso": "#ec4899", "Bai Alleha Manonsol": "#a855f7",
+        "Sitti Nurisa": "#f59e0b", "Maricel Llanzana": "#10b981", "Maria Fe": "#0ea5e9",
+        "Norfaisa Conel": "#f43f5e", "Aloha H Saldivar": "#8b5cf6", "Criselda Pando Peralta": "#f97316",
+        "Lilibeth Nortes": "#06b6d4", "Margie": "#3b82f6", "Margie Billanon Gabaisen": "#ec4899",
+        "Mona Akon Anong": "#a855f7", "Noraida Mutia Madale": "#f59e0b", "Liezel Boncasin": "#10b981",
+        "Jennifer M. Royo": "#0ea5e9", "Lorena Austria Lloren": "#f43f5e", "Rosario Gajardo": "#8b5cf6",
+        "Marcelyn Matayao": "#f97316", "MaryAnn Demetrio": "#06b6d4", "Veronica Fidalgo": "#3b82f6",
+        "Thelma Ahamadul": "#ec4899", "Fatima Aliah Emban": "#a855f7", "Evangeline Allera Ocampo": "#f59e0b",
+        "Ria Gutierez": "#10b981", "Rayjana Gubat Palman": "#0ea5e9", "Gillian": "#f43f5e",
+        "Norfa": "#8b5cf6", "Almalyn": "#f97316", "Aiza": "#06b6d4", "Anabel": "#3b82f6",
+        "Jean Montesilio": "#ec4899", "Varsha Lathika": "#a855f7", "Floriza Bihas Alviz": "#f59e0b",
+        "Radia Ismaeal": "#10b981", "Cicily Joseph": "#0ea5e9", "Maricel Alaman": "#f43f5e",
+        "Aga Kendik Mangelen": "#8b5cf6", "Unassigned": "#94a3b8"
+    };
+
+    // ─── FIRESTORE REALTIME SYNC ACTION LOOP ─────────────────────────
+    const bookingsCollection = collection(db, "bookings");
+
+    onSnapshot(bookingsCollection, (snapshot) => {
+        console.log(`Successfully pulled data instance containing ${snapshot.size} active snapshot references.`);
+        
+        // This is where you connect your database keys to feed your timeline layout elements dynamically
+        snapshot.forEach((docRecord) => {
+            const order = docRecord.data();
+            
+            // Only process rows matching your operational criteria
+            if (String(order.status || '').trim().toUpperCase() !== "NURSE ASSIGNED") return;
+
+            console.log("Rendering Active Data Matrix Entry:", order.nurseName, order.customerName);
+            // Dynamic calendar/row rendering commands can execute here...
+        });
+    });
+</script>
 </body>
 </html>
