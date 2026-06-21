@@ -1,0 +1,139 @@
+<script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, onSnapshot, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // ⚠️ REPLACE THIS BLOCK WITH YOUR WEB APP CONFIG FROM FIREBASE SETTINGS
+        const firebaseConfig = {
+          apiKey: "AIzaSyCPJijOpBBPdU_euyvgwics6F6tZROfHFU",
+  authDomain: "babysitter-calendar-view.firebaseapp.com",
+  projectId: "babysitter-calendar-view",
+  storageBucket: "babysitter-calendar-view.firebasestorage.app",
+  messagingSenderId: "398535391948",
+  appId: "1:398535391948:web:e8c1d6424f2dbe62b06069"
+        };
+
+        // Initialize Firebase & Firestore
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // ─── BABY SITTER COLOR DIRECTORY MAP ──────────────────────────────
+        const nurseColors = {
+            "Sarah Jenkins": "#3b82f6", // Blue
+            "Mary Alawi": "#ec4899",    // Pink
+            "Elena Rostova": "#a855f7",  // Purple
+            "Unassigned": "#94a3b8"     // Gray default
+        };
+
+        function getColorsForNurse(name) {
+            return nurseColors[name] || "#6366f1"; // Default Indigo
+        }
+
+        // ─── STATUS BADGE DESIGN STYLES ───────────────────────────────────
+        function getStatusMarkup(status) {
+            let baseStyles = "inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border shadow-xs text-nowrap";
+            switch (status) {
+                case 'Attended': 
+                    return `<span class="${baseStyles} bg-emerald-50 border-emerald-200 text-emerald-700">✓ Attended</span>`;
+                case 'Absent': 
+                    return `<span class="${baseStyles} bg-rose-50 border-rose-200 text-rose-700">✕ Absent</span>`;
+                case 'Sick Leave': 
+                    return `<span class="${baseStyles} bg-amber-50 border-amber-200 text-amber-700">⚠ Sick Leave</span>`;
+                default: 
+                    return `<span class="${baseStyles} bg-slate-50 border-slate-200 text-slate-600">○ Pending</span>`;
+            }
+        }
+
+        // ─── LISTEN TO FIRESTORE LIVE WITH FILTER ─────────────────────────
+        const bookingsCollection = collection(db, "bookings");
+
+        onSnapshot(bookingsCollection, (snapshot) => {
+            const tbody = document.getElementById('bookings-table-body');
+            tbody.innerHTML = '';
+
+            let renderedCount = 0;
+
+            if (snapshot.empty) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 font-medium">No records found in database collection.</td></tr>`;
+                document.getElementById('total-count').innerText = `0 Orders Loaded`;
+                return;
+            }
+
+            snapshot.forEach((docRecord) => {
+                const order = docRecord.data();
+                const docId = docRecord.id;
+
+                // CRITICAL FILTER: Enforce "NURSE ASSIGNED" only (case-insensitive check for safety)
+                const currentOrderStatus = String(order.status || '').trim().toUpperCase();
+                if (currentOrderStatus !== "NURSE ASSIGNED") {
+                    return; // Skip this document entirely and move to the next row
+                }
+
+                renderedCount++;
+
+                const nurse = order.nurseName || "Unassigned";
+                const customer = order.customerName || "Unknown Customer";
+                const packageName = order.packageName || "N/A";
+                const date = order.slotDate || "No Date";
+                const time = order.slotTime || "No Time";
+                const status = order.status || "Pending";
+                const colorCode = getColorsForNurse(nurse);
+
+                const row = document.createElement('tr');
+                row.className = "hover:bg-slate-50/80 transition-colors duration-150 group";
+
+                row.innerHTML = `
+                    <td class="p-4 pl-6 font-semibold text-slate-900 flex items-center gap-3">
+                        <span class="h-4 w-4 rounded-full border border-black/10 shadow-xs shrink-0 transition-transform group-hover:scale-110" style="background-color: ${colorCode}"></span>
+                        <span>${nurse}</span>
+                    </td>
+                    <td class="p-4">
+                        <div class="font-medium text-slate-800">${customer}</div>
+                        <div class="text-xs text-slate-400 font-mono">ID: ${docId}</div>
+                    </td>
+                    <td class="p-4 text-slate-600 font-medium">${packageName}</td>
+                    <td class="p-4 text-slate-600">
+                        <div class="font-medium">${date}</div>
+                        <div class="text-xs text-slate-400 font-mono">${time}</div>
+                    </td>
+                    <td class="p-4">${getStatusMarkup(status)}</td>
+                    <td class="p-4 pr-6">
+                        <div class="flex justify-center gap-2">
+                            <button data-id="${docId}" data-status="Attended" class="status-btn cursor-pointer px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors shadow-xs">
+                                Attended
+                            </button>
+                            <button data-id="${docId}" data-status="Absent" class="status-btn cursor-pointer px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors shadow-xs">
+                                Absent
+                            </button>
+                            <button data-id="${docId}" data-status="Sick Leave" class="status-btn cursor-pointer px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition-colors shadow-xs">
+                                Sick Leave
+                            </button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            // Update the badge counter at the top with filtered count
+            document.getElementById('total-count').innerText = `${renderedCount} Orders Loaded`;
+
+            if (renderedCount === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 font-medium">No "NURSE ASSIGNED" orders found right now.</td></tr>`;
+            }
+
+            // Bind click event triggers natively to generated items
+            document.querySelectorAll('.status-btn').forEach(button => {
+                button.addEventListener('click', async (e) => {
+                    const id = e.target.getAttribute('data-id');
+                    const targetStatus = e.target.getAttribute('data-status');
+                    
+                    try {
+                        const docRef = doc(db, "bookings", id);
+                        await updateDoc(docRef, { status: targetStatus });
+                        console.log(`Successfully synced updated state [${targetStatus}] to doc reference: ${id}`);
+                    } catch (err) {
+                        console.error("Firestore database write error: ", err);
+                    }
+                });
+            });
+        });
+    </script>
