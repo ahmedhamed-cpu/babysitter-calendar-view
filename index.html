@@ -50,6 +50,21 @@
   .nav-btn:hover { border-color: var(--valeo-gold); color: var(--valeo-navy); }
   .chip { transition: all 0.12s ease; cursor: pointer; user-select: none; }
   .chip[data-active="false"] { opacity: 0.4; }
+  .view-btn { color:#8a8473; background:#fff; transition: all .12s ease; }
+  .view-btn[data-active="true"] { background: var(--valeo-navy); color:#fff; }
+  .view-btn:hover { color: var(--valeo-navy); }
+  .view-btn[data-active="true"]:hover { color:#fff; }
+  summary { list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  .week-cell, .week-day-head { transition: background .12s ease; }
+  .conflict { outline: 2px solid #ef4444; outline-offset: -1px; }
+  @media print {
+    body * { visibility: hidden; }
+    #summary-content, #summary-content * { visibility: visible; }
+    #summary-modal { position: absolute; inset: 0; background:#fff; display:block; padding:0; }
+    #summary-content { box-shadow:none; border:none; width:100%; max-height:none; border-radius:0; }
+    .no-print { display: none !important; }
+  }
 </style>
 </head>
 <body class="text-[#1A2238]">
@@ -108,8 +123,29 @@
     <span class="chip inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-orange-50 text-orange-700 font-medium" data-status="No Show" data-active="true"><span class="h-2.5 w-2.5 rounded-full bg-orange-500"></span>No Show</span>
   </div>
 
-  <!-- GRID CONTAINER -->
-  <div class="bg-white rounded-2xl border border-[#f0ebe0] shadow-sm overflow-hidden">
+  <!-- TOOLBAR -->
+  <div class="flex flex-wrap items-center gap-3 mb-4">
+    <div class="inline-flex rounded-lg border border-[#f0ebe0] bg-white overflow-hidden">
+      <button id="view-day" class="view-btn px-4 h-9 text-sm font-medium" data-view="day" data-active="true">Day</button>
+      <button id="view-week" class="view-btn px-4 h-9 text-sm font-medium border-l border-[#f0ebe0]" data-view="week" data-active="false">Week</button>
+    </div>
+    <input id="search-input" type="text" placeholder="Search customer or nurse&hellip;" class="h-9 px-3 rounded-lg border border-[#f0ebe0] bg-white text-sm w-60 text-[#1A2238]" />
+    <select id="pkg-filter" class="h-9 px-3 rounded-lg border border-[#f0ebe0] bg-white text-sm text-[#1A2238]">
+      <option value="">All packages</option>
+    </select>
+    <details class="relative">
+      <summary class="nav-btn h-9 px-3 rounded-lg border border-[#f0ebe0] bg-white text-sm font-medium text-[#1A2238] cursor-pointer flex items-center gap-1">Export &#9662;</summary>
+      <div class="absolute z-30 mt-1 right-0 bg-white rounded-lg border border-[#f0ebe0] shadow-lg p-1 w-56">
+        <button id="exp-day" class="block w-full text-left px-3 py-2 rounded-md text-sm text-[#1A2238] hover:bg-[#FDF3D9]">Export this day (CSV)</button>
+        <button id="exp-week" class="block w-full text-left px-3 py-2 rounded-md text-sm text-[#1A2238] hover:bg-[#FDF3D9]">Export this week (CSV)</button>
+        <button id="exp-summary" class="block w-full text-left px-3 py-2 rounded-md text-sm text-[#1A2238] hover:bg-[#FDF3D9]">End-of-day summary</button>
+      </div>
+    </details>
+    <span id="filter-note" class="text-xs text-rose-600 font-medium"></span>
+  </div>
+
+  <!-- DAY GRID CONTAINER -->
+  <div id="day-container" class="bg-white rounded-2xl border border-[#f0ebe0] shadow-sm overflow-hidden">
     <div class="grid-scroll overflow-x-auto">
       <div id="grid-wrapper" class="min-w-[1400px]">
         <div class="flex border-b border-[#f0ebe0] bg-[#FDFBF6] sticky top-0 z-10">
@@ -120,6 +156,13 @@
         </div>
         <div id="nurse-rows"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- WEEK VIEW CONTAINER -->
+  <div id="week-container" class="hidden bg-white rounded-2xl border border-[#f0ebe0] shadow-sm overflow-hidden">
+    <div class="grid-scroll overflow-x-auto">
+      <div id="week-grid" class="min-w-[820px]"></div>
     </div>
   </div>
 
@@ -157,6 +200,11 @@
     </div>
     <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium bg-[#f5f1e8] text-[#6b6557] border border-[#e8e1d0] hover:bg-[#ece6d8]">Reset to Pending</button>
   </div>
+</div>
+
+<!-- END-OF-DAY SUMMARY MODAL -->
+<div id="summary-modal" class="modal-backdrop hidden">
+  <div id="summary-content" class="bg-white rounded-2xl shadow-xl w-[720px] max-w-[94vw] max-h-[88vh] overflow-y-auto p-6 border border-[#f0ebe0]"></div>
 </div>
 
 <script type="module">
@@ -341,6 +389,9 @@
   const diag = { total: 0, passedStatus: 0, parsedDate: 0, onDate: 0, noNurse: 0 };
 
   const activeStatuses = new Set(["Pending", "Attended", "Absent", "Sick Leave", "No Show"]);
+  let viewMode = "day";
+  let searchText = "";
+  let pkgFilter = "";
 
   const datePicker = document.getElementById("date-picker");
   const todayStr = () => dateKey(new Date());
@@ -351,77 +402,156 @@
     const header = document.getElementById("time-header");
     header.innerHTML = "";
     for (let h = GRID_START_HOUR; h < GRID_END_HOUR; h++) {
+      const hh = h % 24;
       const label = document.createElement("div");
       label.style.width = PIXELS_PER_HOUR + "px";
       label.className = "shrink-0 px-2 py-2 text-xs font-medium text-[#a39d8c] border-r border-[#f5f1e8]";
-      const displayHour = h % 12 === 0 ? 12 : (h > 12 ? h - 12 : h);
-      const ampm = h >= 12 ? "PM" : "AM";
-      label.textContent = displayHour + ":00 " + ampm;
+      const displayHour = hh % 12 === 0 ? 12 : (hh > 12 ? hh - 12 : hh);
+      const ampm = hh >= 12 ? "PM" : "AM";
+      label.textContent = displayHour + ":00 " + ampm + (h >= 24 ? " ⁺¹" : "");
       header.appendChild(label);
     }
   }
 
-  // ---------- GRID ----------
+  // ---------- DURATION PARSING ----------
+  // A shift's length comes from (1) a time range like "13:00-00:00",
+  // else (2) "… : 11 Hours" in the package name, else (3) a 4h default.
+  function rangeMinutes(timeRaw) {
+    if (typeof timeRaw !== "string") return null;
+    const m = timeRaw.match(/(\d{1,2}):(\d{2})\s*(am|pm)?\s*(?:-|–|to)\s*(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+    if (!m) return null;
+    let sh = +m[1], sm = +m[2]; const sap = m[3] && m[3].toLowerCase();
+    let eh = +m[4], em = +m[5]; const eap = m[6] && m[6].toLowerCase();
+    if (sap === "pm" && sh < 12) sh += 12; if (sap === "am" && sh === 12) sh = 0;
+    if (eap === "pm" && eh < 12) eh += 12; if (eap === "am" && eh === 12) eh = 0;
+    let dur = (eh * 60 + em) - (sh * 60 + sm);
+    if (dur <= 0) dur += 24 * 60; // crosses midnight
+    return dur;
+  }
+  function pkgMinutes(pkgRaw) {
+    if (typeof pkgRaw !== "string") return null;
+    const m = pkgRaw.match(/(\d+(?:\.\d+)?)\s*hour/i);
+    return m ? Math.round(parseFloat(m[1]) * 60) : null;
+  }
+  function durationMin(data) {
+    return rangeMinutes(fieldVal(data, FIELD.slotTime)) ?? pkgMinutes(fieldVal(data, FIELD.pkg)) ?? DEFAULT_DURATION_MIN;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function fmtTime(t) { return t ? t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "—"; }
+  function fmtLong(dk) { return new Date(dk + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }); }
+  function bDateKey(b) { const dt = parseSlotDateTime(b.data); return dt ? dateKey(dt) : null; }
+
+  // ---------- FILTERS ----------
+  function matchesFilters(b) {
+    const d = b.data;
+    if (!activeStatuses.has(d.status || "Pending")) return false;
+    if (pkgFilter && String(fieldVal(d, FIELD.pkg) || "") !== pkgFilter) return false;
+    if (searchText) {
+      const hay = ((fieldVal(d, FIELD.customer) || "") + " " + (fieldVal(d, FIELD.nurseName) || "")).toLowerCase();
+      if (!hay.includes(searchText)) return false;
+    }
+    return true;
+  }
+  function visibleOnDate(dk) { return allBookings.filter(b => matchesFilters(b) && bDateKey(b) === dk); }
+
+  function weekDays(anchorDk) {
+    const sel = new Date(anchorDk + "T00:00:00");
+    const dow = (sel.getDay() + 6) % 7; // Monday = 0
+    const monday = new Date(sel); monday.setDate(sel.getDate() - dow);
+    const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(monday.getDate() + i); return d; });
+    return { days, keys: days.map(dateKey) };
+  }
+
+  function populatePackageFilter() {
+    const sel = document.getElementById("pkg-filter");
+    const set = new Set();
+    allBookings.forEach(b => { const p = fieldVal(b.data, FIELD.pkg); if (p) set.add(String(p)); });
+    const html = ['<option value="">All packages</option>']
+      .concat([...set].sort().map(p => '<option value="' + escapeHtml(p) + '">' + escapeHtml(p) + "</option>")).join("");
+    if (sel.getAttribute("data-sig") !== html) {
+      const cur = sel.value;
+      sel.innerHTML = html; sel.setAttribute("data-sig", html);
+      sel.value = set.has(cur) ? cur : "";
+    }
+  }
+
+  // ---------- DISPATCHER ----------
   function renderGrid() {
+    populatePackageFilter();
+    if (viewMode === "week") {
+      document.getElementById("day-container").classList.add("hidden");
+      document.getElementById("empty-state").classList.add("hidden");
+      document.getElementById("week-container").classList.remove("hidden");
+      renderWeek();
+    } else {
+      document.getElementById("week-container").classList.add("hidden");
+      document.getElementById("day-container").classList.remove("hidden");
+      renderDay();
+    }
+    updateDebug();
+  }
+
+  // ---------- DAY VIEW ----------
+  function renderDay() {
     const selectedDate = datePicker.value;
     const nurseRowsEl = document.getElementById("nurse-rows");
     const emptyState = document.getElementById("empty-state");
     nurseRowsEl.innerHTML = "";
 
-    diag.onDate = 0;
-    let dayBookings = allBookings.filter(b => {
-      const dt = parseSlotDateTime(b.data);
-      if (!dt) return false;
-      return dateKey(dt) === selectedDate;
-    });
-    diag.onDate = dayBookings.length;
-
-    // Status filter (chips)
-    dayBookings = dayBookings.filter(b => activeStatuses.has(b.data.status || "Pending"));
+    diag.onDate = allBookings.filter(b => bDateKey(b) === selectedDate).length;
+    const dayBookings = visibleOnDate(selectedDate);
 
     document.getElementById("order-count").textContent = dayBookings.length + (dayBookings.length === 1 ? " order" : " orders");
-    document.getElementById("subtitle").textContent =
-      new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-
-    updateDebug();
+    document.getElementById("subtitle").textContent = fmtLong(selectedDate);
 
     if (dayBookings.length === 0) {
       emptyState.classList.remove("hidden");
-      document.getElementById("nurse-rows").innerHTML = "";
+      document.getElementById("filter-note").textContent = "";
       return;
     }
     emptyState.classList.add("hidden");
 
-    // Auto-expand visible hours to include every booking that day.
-    let minH = GRID_START_HOUR, maxH = GRID_END_HOUR;
-    dayBookings.forEach(b => {
-      const dt = parseSlotDateTime(b.data);
-      const hf = dt.getHours() + dt.getMinutes() / 60;
-      if (hf < minH) minH = Math.floor(hf);
-      const endH = hf + DEFAULT_DURATION_MIN / 60;
-      if (endH > maxH) maxH = Math.ceil(endH);
+    const enriched = dayBookings.map(b => {
+      const start = parseSlotDateTime(b.data);
+      const dur = durationMin(b.data);
+      return start ? { b, start, dur, end: new Date(start.getTime() + dur * 60000) } : null;
+    }).filter(Boolean);
+
+    let minH = 8, maxH = 22;
+    enriched.forEach(x => {
+      const sh = x.start.getHours() + x.start.getMinutes() / 60;
+      if (sh < minH) minH = Math.floor(sh);
+      if (sh + x.dur / 60 > maxH) maxH = Math.ceil(sh + x.dur / 60);
     });
     GRID_START_HOUR = Math.max(0, Math.min(8, minH));
-    GRID_END_HOUR = Math.min(24, Math.max(22, maxH));
+    GRID_END_HOUR = Math.min(36, Math.max(22, maxH));
     renderTimeHeader();
 
     const byNurse = {};
-    dayBookings.forEach(b => {
-      const nurse = fieldVal(b.data, FIELD.nurseName) || "Unassigned";
-      (byNurse[nurse] = byNurse[nurse] || []).push(b);
-    });
+    enriched.forEach(x => { const n = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; (byNurse[n] = byNurse[n] || []).push(x); });
 
-    const nurseNames = Object.keys(byNurse).sort();
     const gridTotalWidth = (GRID_END_HOUR - GRID_START_HOUR) * PIXELS_PER_HOUR;
+    let conflictNurses = 0;
 
-    nurseNames.forEach(nurseName => {
+    Object.keys(byNurse).sort().forEach(nurseName => {
+      const items = byNurse[nurseName].sort((a, b) => a.start - b.start);
+      const conflict = new Set();
+      for (let i = 0; i < items.length; i++)
+        for (let j = i + 1; j < items.length; j++)
+          if (items[i].start < items[j].end && items[j].start < items[i].end) { conflict.add(i); conflict.add(j); }
+      if (conflict.size) conflictNurses++;
+
       const row = document.createElement("div");
       row.className = "flex nurse-row";
 
       const label = document.createElement("div");
       label.className = "w-[180px] shrink-0 px-3 py-2 flex items-center gap-2 border-r border-[#f0ebe0] bg-white sticky left-0 z-10";
       label.innerHTML = '<span class="h-3 w-3 rounded-full shrink-0" style="background:' + colorFor(nurseName) + '"></span>' +
-        '<span class="text-sm font-medium text-[#1A2238] truncate">' + nurseName + "</span>";
+        '<span class="text-sm font-medium text-[#1A2238] truncate">' + escapeHtml(nurseName) + "</span>" +
+        (conflict.size ? '<span title="Overlapping shifts" class="ml-auto text-rose-500 text-xs">&#9888;</span>' : "");
       row.appendChild(label);
 
       const timeline = document.createElement("div");
@@ -434,37 +564,193 @@
         timeline.appendChild(line);
       }
 
-      byNurse[nurseName].forEach(b => {
-        const dt = parseSlotDateTime(b.data);
-        if (!dt) return;
-        const hourFloat = dt.getHours() + dt.getMinutes() / 60;
-        const leftPx = (hourFloat - GRID_START_HOUR) * PIXELS_PER_HOUR;
-        const widthPx = Math.max((DEFAULT_DURATION_MIN / 60) * PIXELS_PER_HOUR, 60);
-
-        const status = b.data.status || "Pending";
+      items.forEach((x, idx) => {
+        const sh = x.start.getHours() + x.start.getMinutes() / 60;
+        const leftPx = (sh - GRID_START_HOUR) * PIXELS_PER_HOUR;
+        const widthPx = Math.max((x.dur / 60) * PIXELS_PER_HOUR, 60);
+        const status = x.b.data.status || "Pending";
         const accent = statusAccent[status];
         const baseColor = colorFor(nurseName);
 
         const block = document.createElement("div");
-        block.className = "booking-block";
+        block.className = "booking-block" + (conflict.has(idx) ? " conflict" : "");
         block.style.left = leftPx + "px";
         block.style.width = Math.min(widthPx, gridTotalWidth - leftPx) + "px";
         block.style.background = hexToRgba(baseColor, 0.13);
         block.style.borderLeft = "4px solid " + (accent || baseColor);
 
-        const customer = fieldVal(b.data, FIELD.customer) || "Unknown";
-        const timeLabel = dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-
+        const customer = escapeHtml(fieldVal(x.b.data, FIELD.customer) || "Unknown");
         block.innerHTML = '<div class="text-[11px] font-semibold text-[#1A2238] truncate">' + customer + "</div>" +
-          '<div class="text-[10px] text-[#6b6557] truncate">' + timeLabel + " &middot; " + status + "</div>";
-        block.addEventListener("click", () => openModal(b));
+          '<div class="text-[10px] text-[#6b6557] truncate">' + fmtTime(x.start) + "&ndash;" + fmtTime(x.end) + " &middot; " + status + "</div>";
+        block.addEventListener("click", () => openModal(x.b));
         timeline.appendChild(block);
       });
 
       row.appendChild(timeline);
       nurseRowsEl.appendChild(row);
     });
+
+    document.getElementById("filter-note").textContent =
+      conflictNurses ? "\u26A0 " + conflictNurses + " nurse" + (conflictNurses === 1 ? "" : "s") + " with overlapping shifts" : "";
   }
+
+  // ---------- WEEK VIEW ----------
+  function renderWeek() {
+    const { days, keys } = weekDays(datePicker.value);
+    const visible = allBookings.filter(matchesFilters)
+      .map(b => { const start = parseSlotDateTime(b.data); return start ? { b, start, dur: durationMin(b.data) } : null; })
+      .filter(x => x && keys.includes(dateKey(x.start)));
+
+    document.getElementById("subtitle").textContent = "Week of " +
+      days[0].toLocaleDateString("en-US", { month: "long", day: "numeric" }) + " – " +
+      days[6].toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    document.getElementById("order-count").textContent = visible.length + (visible.length === 1 ? " order" : " orders");
+    document.getElementById("filter-note").textContent = "";
+
+    const byNurse = {};
+    visible.forEach(x => { const n = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; (byNurse[n] = byNurse[n] || []).push(x); });
+    const nurses = Object.keys(byNurse).sort();
+
+    let html = '<div class="flex border-b border-[#f0ebe0] bg-[#FDFBF6] sticky top-0 z-10">' +
+      '<div class="w-[180px] shrink-0 px-3 py-2 text-xs font-semibold text-[#8a8473] uppercase border-r border-[#f0ebe0]">Babysitter</div>';
+    days.forEach((d, i) => {
+      const isToday = keys[i] === todayStr();
+      html += '<div class="week-day-head flex-1 min-w-[88px] px-2 py-2 text-center border-r border-[#f5f1e8] cursor-pointer hover:bg-[#FDF3D9]" data-date="' + keys[i] + '">' +
+        '<div class="text-[11px] font-semibold ' + (isToday ? "text-[#E0A800]" : "text-[#1A2238]") + '">' + d.toLocaleDateString("en-US", { weekday: "short" }) + "</div>" +
+        '<div class="text-[10px] text-[#a39d8c]">' + d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + "</div></div>";
+    });
+    html += "</div>";
+
+    if (nurses.length === 0) {
+      document.getElementById("week-grid").innerHTML = html + '<div class="text-center py-12 text-[#a39d8c] text-sm">No bookings match this week.</div>';
+      bindWeekClicks(); return;
+    }
+
+    nurses.forEach(n => {
+      html += '<div class="flex border-b border-[#f0ebe0]">' +
+        '<div class="w-[180px] shrink-0 px-3 py-2 flex items-center gap-2 border-r border-[#f0ebe0] bg-white sticky left-0"><span class="h-3 w-3 rounded-full shrink-0" style="background:' +
+        colorFor(n) + '"></span><span class="text-sm font-medium text-[#1A2238] truncate">' + escapeHtml(n) + "</span></div>";
+      days.forEach((d, i) => {
+        const items = byNurse[n].filter(x => dateKey(x.start) === keys[i]);
+        const cnt = items.length;
+        const hours = items.reduce((s, x) => s + x.dur / 60, 0);
+        const bg = cnt ? hexToRgba(colorFor(n), 0.10 + Math.min(0.4, hours * 0.04)) : "transparent";
+        html += '<div class="week-cell flex-1 min-w-[88px] px-2 py-2 text-center border-r border-[#f5f1e8]' + (cnt ? ' cursor-pointer' : "") + '" data-date="' + keys[i] + '" style="background:' + bg + '">' +
+          (cnt ? '<div class="text-sm font-bold text-[#1A2238]">' + cnt + "</div><div class=\"text-[10px] text-[#6b6557]\">" + (Math.round(hours * 10) / 10) + "h</div>"
+               : '<div class="text-[#d8d2c4] text-xs">&middot;</div>') + "</div>";
+      });
+      html += "</div>";
+    });
+
+    html += '<div class="flex border-t-2 border-[#f0ebe0] bg-[#FDFBF6]"><div class="w-[180px] shrink-0 px-3 py-2 text-xs font-semibold text-[#8a8473] border-r border-[#f0ebe0] sticky left-0 bg-[#FDFBF6]">Total / day</div>';
+    days.forEach((d, i) => {
+      const c = visible.filter(x => dateKey(x.start) === keys[i]).length;
+      html += '<div class="flex-1 min-w-[88px] px-2 py-2 text-center border-r border-[#f5f1e8] text-sm font-bold text-[#1A2238]">' + (c || "") + "</div>";
+    });
+    html += "</div>";
+
+    document.getElementById("week-grid").innerHTML = html;
+    bindWeekClicks();
+  }
+  function bindWeekClicks() {
+    document.querySelectorAll("#week-grid [data-date]").forEach(el => {
+      el.addEventListener("click", () => { datePicker.value = el.getAttribute("data-date"); setView("day"); });
+    });
+  }
+
+  // ---------- EXPORT ----------
+  function rowsFor(bookings) {
+    return bookings.map(b => {
+      const d = b.data, start = parseSlotDateTime(d), dur = durationMin(d);
+      const end = start ? new Date(start.getTime() + dur * 60000) : null;
+      const hm = t => t ? String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0") : "";
+      return {
+        "Date": start ? dateKey(start) : "", "Start": hm(start), "End": hm(end),
+        "Hours": Math.round(dur / 60 * 100) / 100,
+        "Nurse": fieldVal(d, FIELD.nurseName) || "", "Customer": fieldVal(d, FIELD.customer) || "",
+        "Package": fieldVal(d, FIELD.pkg) || "", "Status": d.status || "Pending", "Order ID": b.id
+      };
+    });
+  }
+  function toCSV(rows) {
+    if (!rows.length) return "";
+    const cols = Object.keys(rows[0]);
+    const esc = v => { v = String(v ?? ""); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return cols.join(",") + "\n" + rows.map(r => cols.map(c => esc(r[c])).join(",")).join("\n");
+  }
+  function downloadFile(name, text) {
+    const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function exportDayCSV() {
+    const dk = datePicker.value;
+    const rows = rowsFor(visibleOnDate(dk).sort((a, b) => parseSlotDateTime(a.data) - parseSlotDateTime(b.data)));
+    if (!rows.length) { alert("No bookings to export for " + dk + "."); return; }
+    downloadFile("bookings_" + dk + ".csv", toCSV(rows));
+  }
+  function exportWeekCSV() {
+    const { keys } = weekDays(datePicker.value);
+    const bk = allBookings.filter(b => matchesFilters(b) && keys.includes(bDateKey(b)))
+      .sort((a, b) => parseSlotDateTime(a.data) - parseSlotDateTime(b.data));
+    if (!bk.length) { alert("No bookings to export for this week."); return; }
+    downloadFile("bookings_week_" + keys[0] + ".csv", toCSV(rowsFor(bk)));
+  }
+
+  // ---------- END-OF-DAY SUMMARY ----------
+  function openSummary() {
+    const dk = datePicker.value;
+    const bk = visibleOnDate(dk);
+    const counts = { Pending: 0, Attended: 0, Absent: 0, "Sick Leave": 0, "No Show": 0 };
+    bk.forEach(b => { const s = b.data.status || "Pending"; counts[s] = (counts[s] || 0) + 1; });
+    const marked = counts.Attended + counts.Absent + counts["Sick Leave"] + counts["No Show"];
+    const attRate = marked ? Math.round(counts.Attended / marked * 100) : 0;
+
+    const byNurse = {};
+    bk.forEach(b => { const n = fieldVal(b.data, FIELD.nurseName) || "Unassigned"; (byNurse[n] = byNurse[n] || []).push(b); });
+
+    const tile = (label, val, cls) =>
+      '<div class="rounded-xl border border-[#f0ebe0] px-3 py-2"><div class="text-[10px] uppercase tracking-wide text-[#a39d8c]">' + label +
+      '</div><div class="text-xl font-bold ' + (cls || "text-[#1A2238]") + '">' + val + "</div></div>";
+
+    let nurseRows = "";
+    Object.keys(byNurse).sort().forEach(n => {
+      const items = byNurse[n];
+      const hours = Math.round(items.reduce((s, b) => s + durationMin(b.data) / 60, 0) * 10) / 10;
+      const c = { Attended: 0, Absent: 0, "Sick Leave": 0, "No Show": 0, Pending: 0 };
+      items.forEach(b => { c[b.data.status || "Pending"]++; });
+      nurseRows += '<tr class="border-t border-[#f0ebe0]">' +
+        '<td class="py-1.5 pr-2 font-medium text-[#1A2238]">' + escapeHtml(n) + "</td>" +
+        '<td class="py-1.5 px-2 text-center">' + items.length + "</td>" +
+        '<td class="py-1.5 px-2 text-center">' + hours + "</td>" +
+        '<td class="py-1.5 px-2 text-center text-emerald-600">' + c.Attended + "</td>" +
+        '<td class="py-1.5 px-2 text-center text-rose-600">' + c.Absent + "</td>" +
+        '<td class="py-1.5 px-2 text-center text-amber-600">' + c["Sick Leave"] + "</td>" +
+        '<td class="py-1.5 px-2 text-center text-orange-600">' + c["No Show"] + "</td>" +
+        '<td class="py-1.5 px-2 text-center text-[#a39d8c]">' + c.Pending + "</td></tr>";
+    });
+
+    document.getElementById("summary-content").innerHTML =
+      '<div class="flex items-start justify-between mb-4">' +
+        '<div><h3 class="text-lg font-bold text-[#1A2238]">End-of-day summary</h3>' +
+        '<p class="text-sm text-[#8a8473]">' + fmtLong(dk) + "</p></div>" +
+        '<button id="summary-close" class="no-print text-[#a39d8c] hover:text-[#1A2238] text-xl leading-none">&times;</button></div>' +
+      '<div class="grid grid-cols-3 md:grid-cols-6 gap-2 mb-5">' +
+        tile("Total", bk.length) + tile("Attended", counts.Attended, "text-emerald-600") +
+        tile("Absent", counts.Absent, "text-rose-600") + tile("Sick Leave", counts["Sick Leave"], "text-amber-600") +
+        tile("No Show", counts["No Show"], "text-orange-600") + tile("Attendance", attRate + "%", "text-[#1A2238]") + "</div>" +
+      '<table class="w-full text-sm"><thead><tr class="text-[11px] uppercase tracking-wide text-[#a39d8c] text-center">' +
+        '<th class="text-left pb-1">Nurse</th><th>Bookings</th><th>Hours</th><th>Att.</th><th>Abs.</th><th>Sick</th><th>No-show</th><th>Pend.</th>' +
+        "</tr></thead><tbody>" + (nurseRows || '<tr><td colspan="8" class="py-4 text-center text-[#a39d8c]">No bookings.</td></tr>') + "</tbody></table>" +
+      '<div class="no-print flex justify-end gap-2 mt-6">' +
+        '<button id="summary-print" class="px-4 py-2 rounded-lg text-sm font-semibold text-white" style="background:var(--valeo-navy)">Print / Save PDF</button></div>';
+
+    document.getElementById("summary-modal").classList.remove("hidden");
+    document.getElementById("summary-close").addEventListener("click", closeSummary);
+    document.getElementById("summary-print").addEventListener("click", () => window.print());
+  }
+  function closeSummary() { document.getElementById("summary-modal").classList.add("hidden"); }
 
   // ---------- MODAL ----------
   const modal = document.getElementById("status-modal");
@@ -489,7 +775,7 @@
       if (!activeModalDocId) return;
       const newStatus = btn.getAttribute("data-status");
       try {
-        await updateDoc(doc(db, "bookings", activeModalDocId), { status: newStatus });
+        await updateDoc(doc(db, COLLECTION_NAME, activeModalDocId), { status: newStatus });
         closeModal();
       } catch (err) {
         console.error("Failed to update status:", err);
@@ -519,6 +805,24 @@
       renderGrid();
     });
   });
+
+  function setView(mode) {
+    viewMode = mode;
+    document.querySelectorAll(".view-btn").forEach(b =>
+      b.setAttribute("data-active", b.getAttribute("data-view") === mode ? "true" : "false"));
+    renderGrid();
+  }
+  document.getElementById("view-day").addEventListener("click", () => setView("day"));
+  document.getElementById("view-week").addEventListener("click", () => setView("week"));
+
+  document.getElementById("search-input").addEventListener("input", (e) => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
+  document.getElementById("pkg-filter").addEventListener("change", (e) => { pkgFilter = e.target.value; renderGrid(); });
+
+  function closeMenus() { document.querySelectorAll("details").forEach(d => d.removeAttribute("open")); }
+  document.getElementById("exp-day").addEventListener("click", () => { closeMenus(); exportDayCSV(); });
+  document.getElementById("exp-week").addEventListener("click", () => { closeMenus(); exportWeekCSV(); });
+  document.getElementById("exp-summary").addEventListener("click", () => { closeMenus(); openSummary(); });
+  document.getElementById("summary-modal").addEventListener("click", (e) => { if (e.target.id === "summary-modal") closeSummary(); });
 
   document.getElementById("debug-toggle").addEventListener("click", () => {
     document.getElementById("debug-panel").classList.toggle("hidden");
