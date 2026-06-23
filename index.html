@@ -79,6 +79,9 @@
     <div class="gold-underline"></div>
   </div>
 
+  <!-- CONNECTION BANNER -->
+  <div id="conn-banner" class="hidden"></div>
+
   <!-- DIAGNOSTICS PANEL -->
   <div id="debug-panel" class="hidden bg-[#1A2238] text-[#e7e3d4] rounded-2xl shadow-sm mb-5 overflow-hidden">
     <div class="px-5 py-4">
@@ -86,6 +89,7 @@
         <h2 class="text-sm font-bold text-white">Data diagnostics</h2>
         <span class="text-[11px] text-[#9a93a8]">Use this to confirm what Firestore is actually sending, then hide it.</span>
       </div>
+      <div id="debug-conn" class="text-[12px] font-mono mb-3 text-[#9a93a8]">Connecting to Firestore&hellip;</div>
       <div id="debug-stats" class="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs mb-4"></div>
       <div class="text-[11px] text-[#9a93a8] mb-1 uppercase tracking-wide">Field names found on a sample document</div>
       <div id="debug-keys" class="text-[12px] font-mono leading-relaxed text-[#c7e0ff] mb-4 break-words"></div>
@@ -163,17 +167,22 @@
   // Security Rules scope access to the "bookings" collection only,
   // and restrict client writes to the "status" field exclusively.
   const firebaseConfig = {
-    apiKey: "AIzaSyCPJijOpBBPdU_euyvgwics6F6tZROfHFU",
-    authDomain: "babysitter-calendar-view.firebaseapp.com",
-    projectId: "babysitter-calendar-view",
-    storageBucket: "babysitter-calendar-view.firebasestorage.app",
-    messagingSenderId: "398535391948",
-    appId: "1:398535391948:web:e8c1d6424f2dbe62b06069",
-    measurementId: "G-LYQLZD7W70"
+    apiKey: "AIzaSyB5OShyCIKMqu5RijdCKhohu4uB7yzARIY",
+  authDomain: "bs-calendar-view.firebaseapp.com",
+  projectId: "bs-calendar-view",
+  storageBucket: "bs-calendar-view.firebasestorage.app",
+  messagingSenderId: "1052133360909",
+  appId: "1:1052133360909:web:1219725b42224e4c8e5c44",
+  measurementId: "G-H30659KME3"
   };
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
+
+  // The Firestore collection the dashboard reads from. This MUST match,
+  // exactly and case-sensitively, the collection your n8n workflow writes to
+  // inside this same Firebase project ("babysitter-calendar-view").
+  const COLLECTION_NAME = "bookings";
 
   // ---------- CONFIG ----------
   // If your slot dates come through as DD/MM/YYYY (UAE / Metabase default) leave this "DMY".
@@ -526,42 +535,71 @@
       stat("Passed status filter", diag.passedStatus, diag.passedStatus ? "text-emerald-300" : "text-rose-300") +
       stat("Date parsed OK", diag.parsedDate, diag.parsedDate ? "text-emerald-300" : "text-rose-300") +
       stat("On selected date", diag.onDate) +
-      stat("Missing nurse name", diag.noNurse);
+      stat("Excluded (no nurse)", diag.noNurse);
     document.getElementById("debug-keys").textContent =
       firstRawDoc ? Object.keys(firstRawDoc).join("   ·   ") : "(no documents received yet)";
     document.getElementById("debug-sample").textContent =
       firstRawDoc ? JSON.stringify(firstRawDoc, (k, v) => (v && v.seconds !== undefined ? "Timestamp(" + v.seconds + ")" : v), 2) : "—";
   }
 
+  // ---------- CONNECTION STATUS HELPERS ----------
+  function setConn(msg, level) {
+    const el = document.getElementById("debug-conn");
+    if (!el) return;
+    el.innerHTML = msg;
+    el.className = "text-[12px] font-mono mb-3 " +
+      (level === "ok" ? "text-emerald-300" : level === "error" ? "text-rose-300" : "text-amber-300");
+  }
+  function showBanner(msg, level) {
+    const b = document.getElementById("conn-banner");
+    if (!b) return;
+    if (level === "hide") { b.className = "hidden"; b.innerHTML = ""; return; }
+    const styles = level === "error"
+      ? "bg-rose-50 text-rose-700 border border-rose-200"
+      : "bg-amber-50 text-amber-800 border border-amber-200";
+    b.className = "mb-5 rounded-xl px-4 py-3 text-sm font-medium " + styles;
+    b.innerHTML = msg;
+  }
+
   // ---------- FIRESTORE LISTENER ----------
- const bookingsCollection = collection(db, "bookings");
-onSnapshot(bookingsCollection, { includeMetadataChanges: true }, (snapshot) => {
-  // ... connection-status lines ...
-  const seen = new Set();
-  const deduped = [];
-  diag.total = snapshot.size;
-  diag.passedStatus = 0; diag.parsedDate = 0; diag.noNurse = 0;
-  firstRawDoc = null;
+  const bookingsCollection = collection(db, COLLECTION_NAME);
+  onSnapshot(bookingsCollection, { includeMetadataChanges: true }, (snapshot) => {
+    const src = snapshot.metadata.fromCache ? "cache" : "live server";
+    setConn('Connected &middot; reading collection &quot;' + COLLECTION_NAME + '&quot; in project &quot;' +
+      firebaseConfig.projectId + '&quot; &middot; ' + snapshot.size + " docs (" + src + ")",
+      snapshot.size > 0 ? "ok" : "warn");
 
-  snapshot.forEach(docRecord => {
-    const data = docRecord.data();
-    if (!firstRawDoc) firstRawDoc = data;
+    if (snapshot.size === 0 && !snapshot.metadata.fromCache) {
+      showBanner('Connected to project <b>' + firebaseConfig.projectId + '</b>, but the <b>' + COLLECTION_NAME +
+        '</b> collection has <b>0 documents</b>. Your orders are in a different collection, a subcollection, or a different Firebase project. ' +
+        'Check the exact (case-sensitive) collection name in Firebase Console, and confirm your n8n workflow writes to this same project. ' +
+        'You can change the collection the dashboard reads by editing <code>COLLECTION_NAME</code> near the top of this file.', "warn");
+    } else if (snapshot.size > 0) {
+      showBanner("", "hide");
+    }
 
-    const rawStatus = fieldVal(data, FIELD.orderStatus) || "";        // lowercase .orderStatus
-    const normStatus = String(rawStatus).toLowerCase().replace(/[^a-z]/g, "");
-    const hasAmendedStatus = !!data.status;
-    const isNurseAssigned = normStatus === "nurseassigned";           // compare to normalized value
+    const seen = new Set();
+    const deduped = [];
+    diag.total = snapshot.size;
+    diag.passedStatus = 0;
+    diag.parsedDate = 0;
+    diag.noNurse = 0;
+    firstRawDoc = null;
 
-    if (!isNurseAssigned && !hasAmendedStatus) return;                // use isNurseAssigned
-    diag.passedStatus++;
-    // ...
+    snapshot.forEach(docRecord => {
+      const data = docRecord.data();
+      if (!firstRawDoc) firstRawDoc = data;
 
-      // Show only nurse-assigned bookings (plus anything already tagged here).
-      if (!isNURSEASSIGNED && !hasAmendedStatus) return;
+      // "Assigned" = the booking has a real nurse name (not blank / not "Unassigned").
+      const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
+      const hasNurse = nurse !== "" && nurse.toLowerCase() !== "unassigned";
+      const hasAmendedStatus = !!data.status; // a tag already set from this dashboard
+
+      // Show only bookings that have a nurse assigned (plus anything already tagged here).
+      if (!hasNurse && !hasAmendedStatus) { diag.noNurse++; return; }
       diag.passedStatus++;
 
       if (parseSlotDateTime(data)) diag.parsedDate++;
-      if (!fieldVal(data, FIELD.nurseName)) diag.noNurse++;
 
       if (seen.has(docRecord.id)) return;
       seen.add(docRecord.id);
@@ -572,7 +610,14 @@ onSnapshot(bookingsCollection, { includeMetadataChanges: true }, (snapshot) => {
     renderGrid();
   }, (error) => {
     console.error("Firestore listener error:", error);
-    document.getElementById("subtitle").textContent = "Connection error — check the browser console";
+    setConn("Firestore error: " + error.code + " &mdash; " + error.message, "error");
+    if (error.code === "permission-denied") {
+      showBanner('Firestore denied read access (<b>permission-denied</b>). Your Security Rules are blocking reads on the <b>' +
+        COLLECTION_NAME + '</b> collection. Update the rules to allow reading it.', "error");
+    } else {
+      showBanner("Firestore connection error: " + error.message, "error");
+    }
+    document.getElementById("subtitle").textContent = "Connection error — see the banner above";
   });
 
 </script>
