@@ -534,7 +534,7 @@
   }
 
   // ---------- FIRESTORE LISTENER ----------
- const bookingsCollection = collection(db, COLLECTION_NAME); // "bookings"
+ const bookingsCollection = collection(db, "bookings");
 onSnapshot(bookingsCollection, { includeMetadataChanges: true }, (snapshot) => {
   // ... connection-status lines ...
   const seen = new Set();
