@@ -534,27 +534,30 @@
   }
 
   // ---------- FIRESTORE LISTENER ----------
-  const bookingsCollection = collection(db, "bookings");
-  onSnapshot(bookingsCollection, (snapshot) => {
-    const seen = new Set();
-    const deduped = [];
-    diag.total = snapshot.size;
-    diag.passedStatus = 0;
-    diag.parsedDate = 0;
-    diag.noNurse = 0;
-    firstRawDoc = null;
+ const bookingsCollection = collection(db, COLLECTION_NAME); // "bookings"
+onSnapshot(bookingsCollection, { includeMetadataChanges: true }, (snapshot) => {
+  // ... connection-status lines ...
+  const seen = new Set();
+  const deduped = [];
+  diag.total = snapshot.size;
+  diag.passedStatus = 0; diag.parsedDate = 0; diag.noNurse = 0;
+  firstRawDoc = null;
 
-    snapshot.forEach(docRecord => {
-      const data = docRecord.data();
-      if (!firstRawDoc) firstRawDoc = data;
+  snapshot.forEach(docRecord => {
+    const data = docRecord.data();
+    if (!firstRawDoc) firstRawDoc = data;
 
-      const rawStatus = fieldVal(data, FIELD.orderStatus) || "";
-      const normStatus = String(rawStatus).toLowerCase().replace(/[^a-z]/g, "");
-      const hasAmendedStatus = !!data.status; // a tag set from this dashboard
-      const isNurseAssigned = normStatus === "nurseassigned";
+    const rawStatus = fieldVal(data, FIELD.orderStatus) || "";        // lowercase .orderStatus
+    const normStatus = String(rawStatus).toLowerCase().replace(/[^a-z]/g, "");
+    const hasAmendedStatus = !!data.status;
+    const isNurseAssigned = normStatus === "nurseassigned";           // compare to normalized value
+
+    if (!isNurseAssigned && !hasAmendedStatus) return;                // use isNurseAssigned
+    diag.passedStatus++;
+    // ...
 
       // Show only nurse-assigned bookings (plus anything already tagged here).
-      if (!isNurseAssigned && !hasAmendedStatus) return;
+      if (!isNURSEASSIGNED && !hasAmendedStatus) return;
       diag.passedStatus++;
 
       if (parseSlotDateTime(data)) diag.parsedDate++;
