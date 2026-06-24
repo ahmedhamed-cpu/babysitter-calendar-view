@@ -51,6 +51,8 @@
   summary { list-style:none; } summary::-webkit-details-marker { display:none; }
   .week-cell, .week-day-head { transition:background .12s ease; }
   .conflict { outline:2px solid #ef4444; outline-offset:-1px; }
+  .util-track { height:8px; border-radius:999px; background:var(--border); overflow:hidden; }
+  .util-fill { height:100%; border-radius:999px; }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
   .kpi .k-label { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); white-space:nowrap; }
   .kpi .k-val { font-size:19px; font-weight:700; line-height:1.1; }
@@ -106,6 +108,7 @@
       <button id="view-day" class="view-btn px-4 h-9 text-sm font-medium" data-view="day" data-active="true">Day</button>
       <button id="view-week" class="view-btn px-4 h-9 text-sm font-medium border-l brd" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn px-4 h-9 text-sm font-medium border-l brd" data-view="range" data-active="false">Range</button>
+      <button id="view-util" class="view-btn px-4 h-9 text-sm font-medium border-l brd" data-view="utilisation" data-active="false">Utilisation</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
       <span>From</span><input type="date" id="range-from" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
@@ -120,6 +123,7 @@
       <option value="Daily">Daily</option>
     </select>
     <select id="hc-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All home care</option></select>
+    <select id="city-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All cities</option></select>
     <details class="relative">
       <summary class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium cursor-pointer flex items-center gap-1">Export &#9662;</summary>
       <div class="absolute z-30 mt-1 right-0 card rounded-lg p-1 w-56">
@@ -147,6 +151,15 @@
     <div class="grid-scroll overflow-x-auto"><div id="span-grid" class="min-w-[820px]"></div></div>
   </div>
 
+  <!-- UTILISATION DASHBOARD -->
+  <div id="util-container" class="hidden">
+    <div id="util-summary" class="flex flex-wrap gap-2 mb-4"></div>
+    <div class="card rounded-2xl overflow-hidden">
+      <div class="grid-scroll overflow-x-auto"><div id="util-grid" class="min-w-[860px]"></div></div>
+    </div>
+    <p id="util-note" class="text-xs muted2 mt-3"></p>
+  </div>
+
   <div id="empty-state" class="hidden text-center py-16 muted2">
     <p class="font-medium">No bookings match the current view.</p>
     <p class="text-xs mt-2">Try a different date, clear filters, or check that bookings exist for this period.</p>
@@ -169,6 +182,9 @@
       <div class="flex justify-between"><span>Duration</span><span id="modal-duration">&mdash;</span></div>
       <div class="flex justify-between"><span>Package</span><span id="modal-package" class="text-right">&mdash;</span></div>
       <div class="flex justify-between"><span>Home care</span><span id="modal-homecare" class="text-right">&mdash;</span></div>
+      <div class="flex justify-between"><span>City</span><span id="modal-city" class="text-right">&mdash;</span></div>
+      <div class="flex justify-between"><span>B2B partner</span><span id="modal-b2b" class="text-right">&mdash;</span></div>
+      <div class="flex justify-between"><span>Booking type</span><span id="modal-btype" class="text-right">&mdash;</span></div>
       <div class="flex justify-between"><span>Current status</span><span class="font-semibold" id="modal-current-status">&mdash;</span></div>
       <div class="flex justify-between"><span>Last updated</span><span class="text-xs" id="modal-updated">&mdash;</span></div>
     </div>
@@ -214,6 +230,8 @@
   const PIXELS_PER_HOUR = 90;
   const DEFAULT_DURATION_MIN = 240;
   const ENGAGEMENT_LOOKAHEAD_DAYS = 28; // up to 4 weeks ahead
+  // Utilisation = booked hours ÷ (capacity per day × days in period). Tune to your standard shift.
+  const CAPACITY_HOURS_PER_DAY = 8;
 
   const FIELD = {
     orderStatus: ["Order Status","OrderStatus","Order_Status","order_status","orderStatus","Status"],
@@ -222,7 +240,10 @@
     nurseName:   ["Nurse Name","NurseName","Nurse_Name","nurseName","Nurse","Babysitter","Assigned Nurse"],
     customer:    ["User_Name","User Name","UserName","customerName","Customer Name","Customer","Client","Patient Name"],
     pkg:         ["Package Name","Package Type 2","Package","packageName","Service","Package Type"],
-    homecare:    ["Home Care","HomeCare","Home_Care","Home Care Name","HomeCareName","homeCare","Agency","Partner","Home Care Partner","Provider","Vendor"]
+    homecare:    ["Home Care","HomeCare","Home_Care","Home Care Name","HomeCareName","homeCare","Agency","Partner","Home Care Partner","Provider","Vendor"],
+    city:        ["City","city","Emirate","emirate","Area","area","Location","location","Region","region","Zone","zone"],
+    bookingType: ["Booking Type","BookingType","Booking_Type","bookingType","Babysitter Type","Booking Frequency","Frequency","Engagement","Engagement Type","Plan","Subscription","Recurrence","Daily/Monthly","Type"],
+    b2bPartner:  ["B2B Partner","B2B Partner Name","B2B_Partner","b2bPartner","B2B","B2B Name","Corporate Partner","Corporate Client","Corporate","Account Name","Company Name","Client Company"]
   };
 
   // ---------- FIELD ACCESS ----------
@@ -340,7 +361,7 @@
   let allBookings = [];
   let activeModalDocId = null;
   let viewMode = "day";
-  let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "";
+  let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "";
   let engagementMap = {};
   let nurseMeta = {};                 // nurse -> { homecare }
   const bookingById = new Map();      // id -> { id, data }
@@ -355,21 +376,39 @@
   { const t=new Date(); t.setDate(t.getDate()+13); rangeTo.value = dateKey(t); }
 
   // ---------- ENGAGEMENT CLASSIFICATION ----------
-  // Looks up to 4 weeks ahead; classifies each nurse by how long her run of bookings spans.
-  function classifyAll() {
-    const ref = new Date(); ref.setHours(0,0,0,0);
-    const end = new Date(ref); end.setDate(ref.getDate()+ENGAGEMENT_LOOKAHEAD_DAYS);
-    const map = {};
+  // Source of truth: the explicit booking-type column (Daily / Weekly / Monthly).
+  // A nurse stays tagged for the FULL run — e.g. once a monthly engagement starts she
+  // shows "Monthly" from its first booking to its last, then drops. Falls back to span
+  // inference only when no explicit column value is present.
+  function normEngagement(v) {
+    if (v == null) return null;
+    const s = String(v).toLowerCase();
+    if (s.includes("month")) return "Monthly";
+    if (s.includes("week")) return "Weekly";
+    if (s.includes("dai") || s.includes("day")) return "Daily";
+    return null;
+  }
+  function classifyAll(refDk) {
+    const ref = new Date((refDk || todayStr()) + "T00:00:00"); const refMs = +ref; const DAY = 86400000;
+    const lo = new Date(ref); lo.setDate(ref.getDate() - 45);
+    const hi = new Date(ref); hi.setDate(ref.getDate() + 45);
+    const data = {};
     allBookings.forEach(b => {
+      const dt = parseSlotDateTime(b.data); if (!dt || dt < lo || dt > hi) return;
       const n = fieldVal(b.data, FIELD.nurseName) || "Unassigned";
-      const dt = parseSlotDateTime(b.data); if (!dt) return;
-      if (dt >= ref && dt < end) (map[n] = map[n] || new Set()).add(dateKey(dt));
+      const e = normEngagement(fieldVal(b.data, FIELD.bookingType));
+      const rec = data[n] || (data[n] = { Monthly:[], Weekly:[], Daily:[], any:[] });
+      rec.any.push(+dt); if (e) rec[e].push(+dt);
     });
+    // ref falls inside a run's [first-1d, last+1d] window → that run is still active
+    const within = arr => arr.length && refMs >= Math.min(...arr) - DAY && refMs <= Math.max(...arr) + DAY;
     const out = {};
-    Object.keys(map).forEach(n => {
-      const keys = [...map[n]].sort();
-      const span = (new Date(keys[keys.length-1]+"T00:00:00") - new Date(keys[0]+"T00:00:00"))/86400000 + 1;
-      out[n] = span > 14 ? "Monthly" : (span >= 5 ? "Weekly" : "Daily");
+    Object.keys(data).forEach(n => {
+      const rec = data[n];
+      if (rec.Monthly.length && within(rec.Monthly)) out[n] = "Monthly";
+      else if (rec.Weekly.length && within(rec.Weekly)) out[n] = "Weekly";
+      else if (rec.Monthly.length || rec.Weekly.length || rec.Daily.length) out[n] = "Daily";
+      else { const a = rec.any; const span = (Math.max(...a) - Math.min(...a)) / DAY + 1; out[n] = span > 14 ? "Monthly" : (span >= 5 ? "Weekly" : "Daily"); }
     });
     return out;
   }
@@ -379,8 +418,9 @@
     const d = b.data;
     if (pkgFilter && String(fieldVal(d, FIELD.pkg) || "") !== pkgFilter) return false;
     if (hcFilter && String(fieldVal(d, FIELD.homecare) || "") !== hcFilter) return false;
+    if (cityFilter && String(fieldVal(d, FIELD.city) || "") !== cityFilter) return false;
     if (searchText) {
-      const hay = ((fieldVal(d, FIELD.customer)||"")+" "+(fieldVal(d, FIELD.nurseName)||"")+" "+(fieldVal(d, FIELD.homecare)||"")).toLowerCase();
+      const hay = ((fieldVal(d, FIELD.customer)||"")+" "+(fieldVal(d, FIELD.nurseName)||"")+" "+(fieldVal(d, FIELD.homecare)||"")+" "+(fieldVal(d, FIELD.city)||"")+" "+(fieldVal(d, FIELD.b2bPartner)||"")).toLowerCase();
       if (!hay.includes(searchText)) return false;
     }
     if (engFilter) { const n = fieldVal(d, FIELD.nurseName) || "Unassigned"; if ((engagementMap[n]||"Available") !== engFilter) return false; }
@@ -390,7 +430,7 @@
 
   function currentDayKeys() {
     if (viewMode === "week") return weekDays(datePicker.value).map(dateKey);
-    if (viewMode === "range") return spanDays(rangeFrom.value, rangeTo.value).map(dateKey);
+    if (viewMode === "range" || viewMode === "utilisation") return spanDays(rangeFrom.value, rangeTo.value).map(dateKey);
     return [datePicker.value];
   }
   // Scope ignoring status filter (so KPI tiles show full counts), within current date scope.
@@ -465,16 +505,21 @@
   }
   function cardInner(x) {
     const d = x.b.data;
+    const partner = fieldVal(d, FIELD.b2bPartner);
     const customer = escapeHtml(fieldVal(d, FIELD.customer) || "Unknown");
     const pkg = escapeHtml(fieldVal(d, FIELD.pkg) || "—");
     const status = d.status || "Pending";
-    return `<div class="text-[11px] font-semibold truncate">${customer}</div>` +
+    const city = fieldVal(d, FIELD.city);
+    return (partner ? `<div class="text-[9px] font-bold uppercase tracking-wide truncate" style="color:var(--gold-dark)">&#129309; ${escapeHtml(String(partner))}</div>` : "") +
+           `<div class="text-[11px] font-semibold truncate">${customer}</div>` +
            `<div class="text-[10px] muted truncate">${pkg}</div>` +
-           `<div class="text-[10px] muted2 truncate">${fmtTime(x.start)}–${fmtTime(x.end)} · ${fmtHours(x.dur)} · ${status}</div>`;
+           `<div class="text-[10px] muted2 truncate">${fmtTime(x.start)}–${fmtTime(x.end)} · ${fmtHours(x.dur)} · ${status}</div>` +
+           (city ? `<div class="text-[10px] muted2 truncate">&#128205; ${escapeHtml(String(city))}</div>` : "");
   }
   function cardTitle(x) {
     const d = x.b.data; const hc = homeCareOf(fieldVal(d, FIELD.nurseName) || "Unassigned");
-    return `${fieldVal(d,FIELD.customer)||"Unknown"} • ${fieldVal(d,FIELD.pkg)||""}\n${fmtTime(x.start)}–${fmtTime(x.end)} (${fmtHours(x.dur)}) • ${d.status||"Pending"}${hc?"\nHome care: "+hc:""}`;
+    const city = fieldVal(d, FIELD.city); const partner = fieldVal(d, FIELD.b2bPartner);
+    return `${partner?"["+partner+"] ":""}${fieldVal(d,FIELD.customer)||"Unknown"} • ${fieldVal(d,FIELD.pkg)||""}\n${fmtTime(x.start)}–${fmtTime(x.end)} (${fmtHours(x.dur)}) • ${d.status||"Pending"}${hc?"\nHome care: "+hc:""}${city?"\nCity: "+city:""}`;
   }
   function nurseLabelHTML(nurseName, hasConflict) {
     const hc = homeCareOf(nurseName);
@@ -495,33 +540,33 @@
     if (sel.getAttribute("data-sig") !== html) { const cur = sel.value; sel.innerHTML = html; sel.setAttribute("data-sig", html); sel.value = values.has(cur) ? cur : ""; }
   }
   function populateFilters() {
-    const pkgs = new Set(), hcs = new Set();
-    allBookings.forEach(b => { const p = fieldVal(b.data, FIELD.pkg); if (p) pkgs.add(String(p)); const h = fieldVal(b.data, FIELD.homecare); if (h) hcs.add(String(h)); });
+    const pkgs = new Set(), hcs = new Set(), cities = new Set();
+    allBookings.forEach(b => {
+      const p = fieldVal(b.data, FIELD.pkg); if (p) pkgs.add(String(p));
+      const h = fieldVal(b.data, FIELD.homecare); if (h) hcs.add(String(h));
+      const c = fieldVal(b.data, FIELD.city); if (c) cities.add(String(c));
+    });
     populateSelect("pkg-filter", pkgs, "All packages");
     populateSelect("hc-filter", hcs, "All home care");
+    populateSelect("city-filter", cities, "All cities");
   }
 
   // ---------- DISPATCH ----------
   function renderGrid() {
-    engagementMap = classifyAll();
+    const refDk = viewMode === "day" ? datePicker.value : (viewMode === "week" ? (currentDayKeys()[0] || todayStr()) : (rangeFrom.value || todayStr()));
+    engagementMap = classifyAll(refDk);
     nurseMeta = buildNurseMeta();
     populateFilters();
-    document.getElementById("range-inputs").className = (viewMode === "range" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
+    document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
 
     const scope = scopeNonStatus();
     renderKPI(scope, viewMode === "day" ? "day" : "span");
     const visible = scope.filter(passStatus);
 
-    if (viewMode === "day") {
-      document.getElementById("span-container").classList.add("hidden");
-      document.getElementById("day-container").classList.remove("hidden");
-      renderDay(visible);
-    } else {
-      document.getElementById("day-container").classList.add("hidden");
-      document.getElementById("empty-state").classList.add("hidden");
-      document.getElementById("span-container").classList.remove("hidden");
-      renderSpan(visible);
-    }
+    const show = id => ["day-container","span-container","util-container"].forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
+    if (viewMode === "day") { show("day-container"); renderDay(visible); }
+    else if (viewMode === "utilisation") { show("util-container"); document.getElementById("empty-state").classList.add("hidden"); renderUtil(visible); }
+    else { show("span-container"); document.getElementById("empty-state").classList.add("hidden"); renderSpan(visible); }
   }
 
   // ---------- DAY VIEW ----------
@@ -652,6 +697,68 @@
     document.querySelectorAll("#span-grid .booking-card[data-id]").forEach(el => el.addEventListener("click", () => { const b = bookingById.get(el.getAttribute("data-id")); if (b) openModal(b); }));
   }
 
+  // ---------- UTILISATION DASHBOARD (per babysitter, live) ----------
+  function renderUtil(visible) {
+    const keys = currentDayKeys(); const days = keys.length || 1; const keySet = new Set(keys);
+    const enriched = visible.map(b => { const start = parseSlotDateTime(b.data); if (!start) return null; return { b, start, dur:durationMin(b.data) }; }).filter(x => x && keySet.has(dateKey(x.start)));
+
+    document.getElementById("subtitle").textContent = "Utilisation · " + (keys[0]||"?") + " → " + (keys[keys.length-1]||"?") + " (" + days + " days)";
+    document.getElementById("order-count").textContent = enriched.length + (enriched.length===1?" order":" orders");
+
+    const byNurse = {}; enriched.forEach(x => { const n = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; (byNurse[n]=byNurse[n]||[]).push(x); });
+    const capPeriod = CAPACITY_HOURS_PER_DAY * days;
+
+    const rows = Object.keys(byNurse).map(n => {
+      const items = byNurse[n];
+      const hours = items.reduce((s,x)=>s+x.dur/60,0);
+      const daysWorked = new Set(items.map(x=>dateKey(x.start))).size;
+      const util = capPeriod ? Math.round(hours/capPeriod*100) : 0;
+      const cities = [...new Set(items.map(x=>fieldVal(x.b.data,FIELD.city)).filter(Boolean).map(String))];
+      return { n, hours:Math.round(hours*10)/10, daysWorked, bookings:items.length, util, cities };
+    }).sort((a,b) => b.util-a.util || b.hours-a.hours);
+
+    const totalHours = Math.round(rows.reduce((s,r)=>s+r.hours,0)*10)/10;
+    const avgUtil = rows.length ? Math.round(rows.reduce((s,r)=>s+r.util,0)/rows.length) : 0;
+    const low = rows.filter(r=>r.util<25).length, over = rows.filter(r=>r.util>100).length;
+    const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
+    document.getElementById("util-summary").innerHTML =
+      tile("Babysitters", rows.length) + tile("Total booked hrs", totalHours) + tile("Avg utilisation", avgUtil+"%") +
+      tile("Top", rows[0] ? escapeHtml(rows[0].n.split(" ")[0])+" ("+rows[0].util+"%)" : "—") +
+      tile("Low (&lt;25%)", low, low?"#f59e0b":"") + tile("Over 100%", over, over?"#ef4444":"");
+
+    const utilColor = u => u>100 ? "#ef4444" : (u>=30 ? "#10b981" : "#94a3b8");
+    let html = `<div class="flex border-b brd surface sticky top-0 z-10 text-[11px] uppercase tracking-wide muted2 font-semibold">
+      <div class="w-[220px] shrink-0 px-3 py-2 border-r brd">Babysitter</div>
+      <div class="w-[150px] shrink-0 px-3 py-2 border-r brd2">Home care</div>
+      <div class="flex-1 min-w-[120px] px-3 py-2 border-r brd2">Cities</div>
+      <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2">Bookings</div>
+      <div class="w-[70px] shrink-0 px-3 py-2 text-center border-r brd2">Days</div>
+      <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2">Hours</div>
+      <div class="w-[200px] shrink-0 px-3 py-2">Utilisation</div></div>`;
+
+    if (!rows.length) { document.getElementById("util-grid").innerHTML = html + `<div class="text-center py-12 muted2 text-sm">No bookings in this period.</div>`; document.getElementById("util-note").textContent = ""; return; }
+
+    rows.forEach(r => {
+      const eng = engagementMap[r.n] || "Available", ec = ENG_COLOR[eng];
+      html += `<div class="flex border-b brd items-center text-sm">
+        <div class="w-[220px] shrink-0 px-3 py-2 flex items-center gap-1.5 border-r brd">
+          <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(r.n)}"></span>
+          <span class="font-medium truncate">${escapeHtml(r.n)}</span>
+          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ml-auto" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span></div>
+        <div class="w-[150px] shrink-0 px-3 py-2 border-r brd2 truncate muted">${escapeHtml(homeCareOf(r.n)||"—")}</div>
+        <div class="flex-1 min-w-[120px] px-3 py-2 border-r brd2 truncate muted" title="${escapeHtml(r.cities.join(', '))}">${r.cities.length?escapeHtml(r.cities.join(", ")):"—"}</div>
+        <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2">${r.bookings}</div>
+        <div class="w-[70px] shrink-0 px-3 py-2 text-center border-r brd2">${r.daysWorked}</div>
+        <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2 font-semibold">${r.hours}</div>
+        <div class="w-[200px] shrink-0 px-3 py-2"><div class="flex items-center gap-2">
+          <div class="util-track flex-1"><div class="util-fill" style="width:${Math.min(100,r.util)}%;background:${utilColor(r.util)}"></div></div>
+          <span class="text-xs font-semibold" style="color:${utilColor(r.util)}">${r.util}%</span></div></div></div>`;
+    });
+    document.getElementById("util-grid").innerHTML = html;
+    document.getElementById("util-grid").style.minWidth = "860px";
+    document.getElementById("util-note").innerHTML = `Utilisation = booked hours ÷ (capacity <b>${CAPACITY_HOURS_PER_DAY}h/day</b> × ${days} days). Tune <code>CAPACITY_HOURS_PER_DAY</code> near the top of the file. Period = the From/To dates above; updates live with Firestore.`;
+  }
+
   // ---------- MODAL ----------
   const modal = document.getElementById("status-modal");
   function openModal(booking) {
@@ -664,6 +771,10 @@
     document.getElementById("modal-duration").textContent = fmtHours(dur);
     document.getElementById("modal-package").textContent = fieldVal(d, FIELD.pkg) || "—";
     document.getElementById("modal-homecare").textContent = homeCareOf(fieldVal(d, FIELD.nurseName) || "Unassigned") || fieldVal(d, FIELD.homecare) || "—";
+    document.getElementById("modal-city").textContent = fieldVal(d, FIELD.city) || "—";
+    document.getElementById("modal-b2b").textContent = fieldVal(d, FIELD.b2bPartner) || "—";
+    { const raw = fieldVal(d, FIELD.bookingType); const tagged = engagementMap[fieldVal(d, FIELD.nurseName) || "Unassigned"] || "—";
+      document.getElementById("modal-btype").textContent = raw ? (String(raw) + " · tagged " + tagged) : ("tagged " + tagged); }
     document.getElementById("modal-current-status").textContent = d.status || "Pending";
     document.getElementById("modal-updated").textContent = d.statusUpdatedAt ? new Date(d.statusUpdatedAt).toLocaleString("en-US") : "—";
 
@@ -708,11 +819,13 @@
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
   document.getElementById("view-week").addEventListener("click", () => setView("week"));
   document.getElementById("view-range").addEventListener("click", () => setView("range"));
+  document.getElementById("view-util").addEventListener("click", () => setView("utilisation"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
   document.getElementById("eng-filter").addEventListener("change", e => { engFilter = e.target.value; renderGrid(); });
   document.getElementById("hc-filter").addEventListener("change", e => { hcFilter = e.target.value; renderGrid(); });
+  document.getElementById("city-filter").addEventListener("change", e => { cityFilter = e.target.value; renderGrid(); });
 
   function closeMenus() { document.querySelectorAll("details").forEach(d => d.removeAttribute("open")); }
   document.getElementById("exp-view").addEventListener("click", () => { closeMenus(); exportViewCSV(); });
@@ -733,7 +846,7 @@
       const hm = t => t ? String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0") : "";
       return { "Date":start?dateKey(start):"", "Start":hm(start), "End":hm(end), "Hours":Math.round(dur/60*100)/100,
         "Nurse":fieldVal(d,FIELD.nurseName)||"", "Engagement":engagementMap[fieldVal(d,FIELD.nurseName)||"Unassigned"]||"Available",
-        "Customer":fieldVal(d,FIELD.customer)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(fieldVal(d,FIELD.nurseName)||"Unassigned")||"", "Package":fieldVal(d,FIELD.pkg)||"", "Status":d.status||"Pending",
+        "Customer":fieldVal(d,FIELD.customer)||"", "B2B Partner":fieldVal(d,FIELD.b2bPartner)||"", "City":fieldVal(d,FIELD.city)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(fieldVal(d,FIELD.nurseName)||"Unassigned")||"", "Package":fieldVal(d,FIELD.pkg)||"", "Booking Type":fieldVal(d,FIELD.bookingType)||"", "Status":d.status||"Pending",
         "Updated At":d.statusUpdatedAt||"", "Order ID":b.id };
     });
   }
