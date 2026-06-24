@@ -134,7 +134,7 @@
       <option value="Weekly">Weekly</option>
       <option value="Daily">Daily</option>
     </select>
-    <select id="hc-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All home care</option></select>
+    <select id="hc-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All agencies</option></select>
     <select id="city-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All cities</option></select>
     <details class="relative">
       <summary class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium cursor-pointer flex items-center gap-1">Export &#9662;</summary>
@@ -467,6 +467,7 @@
   let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "";
   let engagementMap = {};
   let nurseMeta = {};                 // nurse -> { homecare }
+  let bsUniverse = {};                // idKey -> { slug, name, agency, city, iqama, schedule, active, order }
   let babysitterDocs = {};            // slug -> { slug, name, agency, city, active }
   const bookingById = new Map();      // id -> { id, data }
   const activeStatuses = new Set(["Pending","Attended","Absent","Sick Leave","No Show"]);
@@ -520,15 +521,16 @@
   // ---------- FILTERS ----------
   function passNonStatus(b) {
     const d = b.data;
-    if (!isActive(fieldVal(d, FIELD.nurseName) || "")) return false; // deactivated babysitters hidden
+    const nurse = fieldVal(d, FIELD.nurseName) || "";
+    if (!isActive(nurse)) return false; // deactivated babysitters hidden
     if (pkgFilter && String(fieldVal(d, FIELD.pkg) || "") !== pkgFilter) return false;
-    if (hcFilter && String(fieldVal(d, FIELD.homecare) || "") !== hcFilter) return false;
-    if (cityFilter && String(fieldVal(d, FIELD.city) || "") !== cityFilter) return false;
+    if (hcFilter) { const ag = agencyOf(nurse) || canonAgency(fieldVal(d, FIELD.homecare)); if (ag !== hcFilter) return false; }
+    if (cityFilter) { const ct = cityOf(nurse) || String(fieldVal(d, FIELD.city) || ""); if (ct !== cityFilter) return false; }
     if (searchText) {
       const hay = ((fieldVal(d, FIELD.customer)||"")+" "+(fieldVal(d, FIELD.nurseName)||"")+" "+(fieldVal(d, FIELD.homecare)||"")+" "+(fieldVal(d, FIELD.city)||"")+" "+(fieldVal(d, FIELD.b2bPartner)||"")).toLowerCase();
       if (!hay.includes(searchText)) return false;
     }
-    if (engFilter) { if (engagementOf(fieldVal(d, FIELD.nurseName) || "Unassigned") !== engFilter) return false; }
+    if (engFilter) { if (engagementOf(nurse || "Unassigned") !== engFilter) return false; }
     return true;
   }
   const passStatus = b => activeStatuses.has(b.data.status || "Pending");
@@ -599,26 +601,36 @@
     });
     return map;
   }
-  const homeCareOf = name => { const m = nurseMeta[idKey(name)]; return (m && m.homecare) || ""; };
+  const homeCareOf = name => { const u = bsUniverse[idKey(name)]; if (u && u.agency) return u.agency; const m = nurseMeta[idKey(name)]; return m ? canonAgency(m.homecare) : ""; };
   const engagementOf = name => engagementMap[idKey(name)] || "Available";
+  const agencyOf = name => { const u = bsUniverse[idKey(name)]; return (u && u.agency) || ""; };
+  const cityOf = name => { const u = bsUniverse[idKey(name)]; return (u && u.city) || ""; };
 
   // A babysitter is active unless an explicit Firestore doc marks her inactive.
   function isActive(name) { const d = babysitterDocs[idKey(name)]; return !d || d.active !== false; }
-  // Union of roster + Firestore docs + nurses seen in bookings.
+  // Union of roster + Firestore docs + nurses seen in bookings. Agency canonicalized.
   function babysitterUniverse() {
     const map = {};
     const ensure = (key, name) => map[key] || (map[key] = { slug:key, name:displayName(name), agency:"", city:"", iqama:"", schedule:"", active:true, order:undefined });
-    ROSTER.forEach(r => { const e = ensure(idKey(r.name), r.name); if (!e.agency) e.agency = r.agency; if (!e.city) e.city = r.city || ""; if (r.iqama) e.iqama = r.iqama; if (r.schedule) e.schedule = r.schedule; });
+    ROSTER.forEach(r => { const e = ensure(idKey(r.name), r.name); if (!e.agency) e.agency = canonAgency(r.agency); if (!e.city) e.city = r.city || ""; if (r.iqama) e.iqama = r.iqama; if (r.schedule) e.schedule = r.schedule; });
     allBookings.forEach(b => {
       const nm = fieldVal(b.data, FIELD.nurseName) || ""; if (!nm) return;
       const e = ensure(idKey(nm), nm);
-      if (!e.agency) { const h = fieldVal(b.data, FIELD.homecare); if (h) e.agency = String(h); }
+      if (!e.agency) { const h = fieldVal(b.data, FIELD.homecare); if (h) e.agency = canonAgency(h); }
       if (!e.city) { const c = fieldVal(b.data, FIELD.city); if (c) e.city = String(c); }
     });
-    Object.values(babysitterDocs).forEach(d => { const e = ensure(d.slug, d.name || d.slug); if (d.agency && !e.agency) e.agency = d.agency; if (d.city && !e.city) e.city = d.city; e.active = d.active !== false; if (typeof d.order === "number") e.order = d.order; });
+    Object.values(babysitterDocs).forEach(d => { const e = ensure(d.slug, d.name || d.slug); if (d.agency && !e.agency) e.agency = canonAgency(d.agency); if (d.city && !e.city) e.city = d.city; e.active = d.active !== false; if (typeof d.order === "number") e.order = d.order; });
     return map;
   }
-  function agencyColor(a) { const s = (a || "").toLowerCase(); if (s.includes("helpful")) return "#3b82f6"; if (s.includes("tamaam") || s.includes("tammam")) return "#0ea5a3"; return "#94a3b8"; }
+  // Different sources spell the agency differently ("Helpful agency"/"Helpful Agency",
+  // "Tamaam homecare"/"Tamaam HC"). Fold every variant to one canonical label.
+  function canonAgency(s) {
+    const t = String(s || "").toLowerCase();
+    if (t.includes("helpful")) return "Helpful agency";
+    if (t.includes("tamaam") || t.includes("tammam") || t.includes("tamam") || t.includes("taman")) return "Tamaam HC";
+    return String(s || "").trim();
+  }
+  function agencyColor(a) { const s = canonAgency(a).toLowerCase(); if (s.includes("helpful")) return "#3b82f6"; if (s.includes("tamaam") || s.includes("tammam") || s.includes("tamam")) return "#0ea5a3"; return "#94a3b8"; }
 
   // ---------- SHARED BOOKING CARD ----------
   // Used by both the day timeline (absolute, width = duration) and the
@@ -665,14 +677,11 @@
     if (sel.getAttribute("data-sig") !== html) { const cur = sel.value; sel.innerHTML = html; sel.setAttribute("data-sig", html); sel.value = values.has(cur) ? cur : ""; }
   }
   function populateFilters() {
-    const pkgs = new Set(), hcs = new Set(), cities = new Set();
-    allBookings.forEach(b => {
-      const p = fieldVal(b.data, FIELD.pkg); if (p) pkgs.add(String(p));
-      const h = fieldVal(b.data, FIELD.homecare); if (h) hcs.add(String(h));
-      const c = fieldVal(b.data, FIELD.city); if (c) cities.add(String(c));
-    });
+    const pkgs = new Set(), ags = new Set(), cities = new Set();
+    allBookings.forEach(b => { const p = fieldVal(b.data, FIELD.pkg); if (p) pkgs.add(String(p)); const c = fieldVal(b.data, FIELD.city); if (c) cities.add(String(c)); });
+    Object.values(bsUniverse).forEach(u => { if (u.agency) ags.add(u.agency); if (u.city) cities.add(u.city); });
     populateSelect("pkg-filter", pkgs, "All packages");
-    populateSelect("hc-filter", hcs, "All home care");
+    populateSelect("hc-filter", ags, "All agencies");
     populateSelect("city-filter", cities, "All cities");
   }
 
@@ -681,6 +690,7 @@
     const refDk = viewMode === "day" ? datePicker.value : (viewMode === "week" ? (currentDayKeys()[0] || todayStr()) : (rangeFrom.value || todayStr()));
     engagementMap = classifyAll(refDk);
     nurseMeta = buildNurseMeta();
+    bsUniverse = babysitterUniverse();
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("kpi-bar").style.display = (viewMode === "profiles") ? "none" : "flex";
@@ -838,7 +848,11 @@
     document.getElementById("order-count").textContent = enriched.length + (enriched.length===1?" order":" orders");
 
     const bySlug = {}; enriched.forEach(x => (bySlug[x.s]=bySlug[x.s]||[]).push(x));
-    const active = Object.values(babysitterUniverse()).filter(u => u.active);
+    const active = Object.values(bsUniverse).filter(u => u.active
+      && (!hcFilter || u.agency === hcFilter)
+      && (!cityFilter || u.city === cityFilter)
+      && (!engFilter || engagementOf(u.name) === engFilter)
+      && (!searchText || (u.name + " " + (u.agency||"") + " " + (u.city||"")).toLowerCase().includes(searchText)));
     const capPeriod = CAPACITY_HOURS_PER_DAY * days;
 
     const rows = active.map(u => {
@@ -895,7 +909,7 @@
 
   // ---------- BABYSITTER PROFILES ----------
   function renderProfiles() {
-    const all = Object.values(babysitterUniverse()).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
+    const all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
     const q = searchText;
     const list = all.filter(u => !q || (u.name + " " + (u.agency||"") + " " + (u.city||"")).toLowerCase().includes(q));
     const activeCount = all.filter(u => u.active).length;
@@ -909,31 +923,32 @@
       tile("Total babysitters", all.length) + tile("Active", activeCount, "#10b981") + tile("Inactive", all.length-activeCount, (all.length-activeCount)?"#ef4444":"") +
       Object.keys(byAgency).sort().map(a => tile(a, byAgency[a])).join("");
 
-    // group filtered list by agency
+    // group by agency, split by city (so Helpful agency separates Riyadh / Jeddah; Tamaam HC stays as one)
+    const groupKeyOf = u => (u.agency || "Unassigned agency") + (u.city ? " · " + u.city : "");
     const dndOn = !searchText; // reordering only on the full, unfiltered list
-    const groups = {}; list.forEach(u => { const a = u.agency || "Unassigned agency"; (groups[a]=groups[a]||[]).push(u); });
+    const groups = {}; list.forEach(u => { const k = groupKeyOf(u); (groups[k]=groups[k]||[]).push(u); });
     const grip = `<span class="prof-grip shrink-0" title="Drag to reorder" aria-hidden="true"><svg width="10" height="16" viewBox="0 0 10 16"><g fill="currentColor"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></g></svg></span>`;
     let html = "";
-    Object.keys(groups).sort().forEach(a => {
-      const ac = agencyColor(a);
-      groups[a].sort((x,y) => (x.order ?? Infinity) - (y.order ?? Infinity) || x.name.localeCompare(y.name));
+    Object.keys(groups).sort().forEach(gkey => {
+      const ac = agencyColor(gkey);
+      groups[gkey].sort((x,y) => (x.order ?? Infinity) - (y.order ?? Infinity) || x.name.localeCompare(y.name));
       html += `<div class="card rounded-2xl overflow-hidden mb-4">
         <div class="px-4 py-3 surface border-b brd flex items-center gap-2">
           <span class="h-3 w-3 rounded-full" style="background:${ac}"></span>
-          <span class="font-semibold">${escapeHtml(a)}</span>
-          <span class="text-xs muted2">${groups[a].length}</span></div>
-        <div class="prof-group" data-agency="${escapeHtml(a)}">`;
-      groups[a].forEach(u => {
+          <span class="font-semibold">${escapeHtml(gkey)}</span>
+          <span class="text-xs muted2">${groups[gkey].length}</span></div>
+        <div class="prof-group" data-group="${escapeHtml(gkey)}">`;
+      groups[gkey].forEach(u => {
         const eng = engagementOf(u.name), ec = ENG_COLOR[eng];
         const iqColor = /active/i.test(u.iqama) ? "#10b981" : (/expired/i.test(u.iqama) ? "#ef4444" : "#94a3b8");
         const currentBadge = `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>`;
         const iqamaBadge = u.iqama ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(iqColor,0.16)};color:${iqColor}" title="Iqama status">${escapeHtml(u.iqama)}</span>` : "";
-        html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}" draggable="${dndOn}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}">
+        html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}" draggable="${dndOn}" data-group="${escapeHtml(gkey)}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}">
           ${dndOn ? grip : ""}
           <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(u.name)}"></span>
           <div class="min-w-0 flex-1">
             <div class="text-sm font-medium truncate">${escapeHtml(u.name)}</div>
-            <div class="text-[11px] muted2 truncate">${escapeHtml(u.city||"—")}${u.schedule?` · ${escapeHtml(u.schedule)}`:""}</div></div>
+            <div class="text-[11px] muted2 truncate">${u.schedule?escapeHtml(u.schedule):"—"}</div></div>
           <div class="flex items-center gap-1.5 shrink-0">${currentBadge}${iqamaBadge}</div>
           <span class="text-xs font-medium shrink-0 ${u.active?"text-emerald-600":"muted2"}">${u.active?"Active":"Inactive"}</span>
           <div class="switch" draggable="false" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>
@@ -961,7 +976,7 @@
   }
 
   // ---------- PROFILE DRAG & DROP (manual ordering, persisted) ----------
-  let dragSlug = null, dragAgency = null;
+  let dragSlug = null, dragGroup = null;
   function rowAfterPoint(group, y) {
     const rows = [...group.querySelectorAll(".prof-row:not(.dragging)")];
     return rows.find(r => { const box = r.getBoundingClientRect(); return y < box.top + box.height / 2; }) || null;
@@ -979,12 +994,12 @@
   }
   function bindProfileDnD() {
     document.querySelectorAll("#profiles-list .prof-row[draggable='true']").forEach(row => {
-      row.addEventListener("dragstart", e => { dragSlug = row.dataset.slug; dragAgency = row.dataset.agency; row.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", dragSlug); } catch (_) {} });
-      row.addEventListener("dragend", () => { row.classList.remove("dragging"); clearDropMarks(); dragSlug = null; dragAgency = null; });
+      row.addEventListener("dragstart", e => { dragSlug = row.dataset.slug; dragGroup = row.dataset.group; row.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", dragSlug); } catch (_) {} });
+      row.addEventListener("dragend", () => { row.classList.remove("dragging"); clearDropMarks(); dragSlug = null; dragGroup = null; });
     });
     document.querySelectorAll("#profiles-list .prof-group").forEach(group => {
       group.addEventListener("dragover", e => {
-        if (dragSlug == null || group.dataset.agency !== dragAgency) return; // reorder within same agency only
+        if (dragSlug == null || group.dataset.group !== dragGroup) return; // reorder within same group only
         e.preventDefault(); e.dataTransfer.dropEffect = "move";
         const after = rowAfterPoint(group, e.clientY);
         clearDropMarks();
@@ -992,7 +1007,7 @@
         else if (after.dataset.slug !== dragSlug) after.classList.add("drop-before");
       });
       group.addEventListener("drop", async e => {
-        if (dragSlug == null || group.dataset.agency !== dragAgency) return;
+        if (dragSlug == null || group.dataset.group !== dragGroup) return;
         e.preventDefault();
         const dragged = group.querySelector(`.prof-row[data-slug="${dragSlug}"]`); if (!dragged) return;
         const after = rowAfterPoint(group, e.clientY);
