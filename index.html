@@ -58,6 +58,12 @@
   .switch .knob { position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s ease; box-shadow:0 1px 2px rgba(0,0,0,.3); }
   .switch[data-on="true"] .knob { left:21px; }
   .prof-row.inactive { opacity:.55; }
+  .prof-grip { cursor:grab; color:var(--text-3); display:flex; align-items:center; }
+  .prof-grip:active { cursor:grabbing; }
+  .prof-row[draggable="true"] { cursor:default; }
+  .prof-row.dragging { opacity:.4; }
+  .prof-row.drop-before { box-shadow: inset 0 3px 0 0 var(--gold-dark); }
+  .prof-row.drop-after  { box-shadow: inset 0 -3px 0 0 var(--gold-dark); }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
   .kpi .k-label { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); white-space:nowrap; }
   .kpi .k-val { font-size:19px; font-weight:700; line-height:1.1; }
@@ -601,7 +607,7 @@
   // Union of roster + Firestore docs + nurses seen in bookings.
   function babysitterUniverse() {
     const map = {};
-    const ensure = (key, name) => map[key] || (map[key] = { slug:key, name:displayName(name), agency:"", city:"", iqama:"", schedule:"", active:true });
+    const ensure = (key, name) => map[key] || (map[key] = { slug:key, name:displayName(name), agency:"", city:"", iqama:"", schedule:"", active:true, order:undefined });
     ROSTER.forEach(r => { const e = ensure(idKey(r.name), r.name); if (!e.agency) e.agency = r.agency; if (!e.city) e.city = r.city || ""; if (r.iqama) e.iqama = r.iqama; if (r.schedule) e.schedule = r.schedule; });
     allBookings.forEach(b => {
       const nm = fieldVal(b.data, FIELD.nurseName) || ""; if (!nm) return;
@@ -609,7 +615,7 @@
       if (!e.agency) { const h = fieldVal(b.data, FIELD.homecare); if (h) e.agency = String(h); }
       if (!e.city) { const c = fieldVal(b.data, FIELD.city); if (c) e.city = String(c); }
     });
-    Object.values(babysitterDocs).forEach(d => { const e = ensure(d.slug, d.name || d.slug); if (d.agency && !e.agency) e.agency = d.agency; if (d.city && !e.city) e.city = d.city; e.active = d.active !== false; });
+    Object.values(babysitterDocs).forEach(d => { const e = ensure(d.slug, d.name || d.slug); if (d.agency && !e.agency) e.agency = d.agency; if (d.city && !e.city) e.city = d.city; e.active = d.active !== false; if (typeof d.order === "number") e.order = d.order; });
     return map;
   }
   function agencyColor(a) { const s = (a || "").toLowerCase(); if (s.includes("helpful")) return "#3b82f6"; if (s.includes("tamaam") || s.includes("tammam")) return "#0ea5a3"; return "#94a3b8"; }
@@ -904,34 +910,39 @@
       Object.keys(byAgency).sort().map(a => tile(a, byAgency[a])).join("");
 
     // group filtered list by agency
+    const dndOn = !searchText; // reordering only on the full, unfiltered list
     const groups = {}; list.forEach(u => { const a = u.agency || "Unassigned agency"; (groups[a]=groups[a]||[]).push(u); });
+    const grip = `<span class="prof-grip shrink-0" title="Drag to reorder" aria-hidden="true"><svg width="10" height="16" viewBox="0 0 10 16"><g fill="currentColor"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></g></svg></span>`;
     let html = "";
     Object.keys(groups).sort().forEach(a => {
       const ac = agencyColor(a);
+      groups[a].sort((x,y) => (x.order ?? Infinity) - (y.order ?? Infinity) || x.name.localeCompare(y.name));
       html += `<div class="card rounded-2xl overflow-hidden mb-4">
         <div class="px-4 py-3 surface border-b brd flex items-center gap-2">
           <span class="h-3 w-3 rounded-full" style="background:${ac}"></span>
           <span class="font-semibold">${escapeHtml(a)}</span>
-          <span class="text-xs muted2">${groups[a].length}</span></div>`;
+          <span class="text-xs muted2">${groups[a].length}</span></div>
+        <div class="prof-group" data-agency="${escapeHtml(a)}">`;
       groups[a].forEach(u => {
         const eng = engagementOf(u.name), ec = ENG_COLOR[eng];
         const iqColor = /active/i.test(u.iqama) ? "#10b981" : (/expired/i.test(u.iqama) ? "#ef4444" : "#94a3b8");
         const currentBadge = `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>`;
         const iqamaBadge = u.iqama ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(iqColor,0.16)};color:${iqColor}" title="Iqama status">${escapeHtml(u.iqama)}</span>` : "";
-        html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}">
+        html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}" draggable="${dndOn}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}">
+          ${dndOn ? grip : ""}
           <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(u.name)}"></span>
           <div class="min-w-0 flex-1">
             <div class="text-sm font-medium truncate">${escapeHtml(u.name)}</div>
             <div class="text-[11px] muted2 truncate">${escapeHtml(u.city||"—")}${u.schedule?` · ${escapeHtml(u.schedule)}`:""}</div></div>
           <div class="flex items-center gap-1.5 shrink-0">${currentBadge}${iqamaBadge}</div>
           <span class="text-xs font-medium shrink-0 ${u.active?"text-emerald-600":"muted2"}">${u.active?"Active":"Inactive"}</span>
-          <div class="switch" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>
+          <div class="switch" draggable="false" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>
         </div>`;
       });
-      html += `</div>`;
+      html += `</div></div>`;
     });
     document.getElementById("profiles-list").innerHTML = html || `<div class="text-center py-12 muted2 text-sm">No babysitters match.</div>`;
-    document.getElementById("profiles-note").innerHTML = `Toggle a babysitter off to hide her and all her bookings from every operational view — she stays in the data. Active/inactive is saved to the Firestore <b>babysitters</b> collection (needs rules to allow writes). Names must match between this roster and your Metabase nurse names to line up.`;
+    document.getElementById("profiles-note").innerHTML = `Drag the &#8942; handle to reorder babysitters within an agency — the order is saved and shared. ${searchText?"<b>Reordering is paused while searching</b> — clear the search box to drag. ":""}Toggle a babysitter off to hide her (and her bookings) from every operational view; she stays in the data. Saved to the Firestore <b>babysitters</b> collection.`;
 
     document.querySelectorAll("#profiles-list .switch").forEach(sw => sw.addEventListener("click", async () => {
       const next = sw.getAttribute("data-on") !== "true";
@@ -945,6 +956,51 @@
         alert("Could not save the on/off state.\nIf this says 'permission-denied', add Firestore rules for the 'babysitters' collection (see the rules I provided).");
       }
     }));
+
+    bindProfileDnD();
+  }
+
+  // ---------- PROFILE DRAG & DROP (manual ordering, persisted) ----------
+  let dragSlug = null, dragAgency = null;
+  function rowAfterPoint(group, y) {
+    const rows = [...group.querySelectorAll(".prof-row:not(.dragging)")];
+    return rows.find(r => { const box = r.getBoundingClientRect(); return y < box.top + box.height / 2; }) || null;
+  }
+  function clearDropMarks() { document.querySelectorAll("#profiles-list .prof-row").forEach(r => r.classList.remove("drop-before","drop-after")); }
+  async function persistGroupOrder(group) {
+    const rows = [...group.querySelectorAll(".prof-row")];
+    try {
+      await Promise.all(rows.map((r, i) => setDoc(doc(db, "babysitters", r.dataset.slug),
+        { name: r.dataset.name, agency: r.dataset.agency, city: r.dataset.city, order: i }, { merge: true })));
+    } catch (err) {
+      console.error("Failed to save order:", err);
+      alert("Could not save the new order.\nIf this says 'permission-denied', the Firestore rules must allow writes to the 'babysitters' collection.");
+    }
+  }
+  function bindProfileDnD() {
+    document.querySelectorAll("#profiles-list .prof-row[draggable='true']").forEach(row => {
+      row.addEventListener("dragstart", e => { dragSlug = row.dataset.slug; dragAgency = row.dataset.agency; row.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", dragSlug); } catch (_) {} });
+      row.addEventListener("dragend", () => { row.classList.remove("dragging"); clearDropMarks(); dragSlug = null; dragAgency = null; });
+    });
+    document.querySelectorAll("#profiles-list .prof-group").forEach(group => {
+      group.addEventListener("dragover", e => {
+        if (dragSlug == null || group.dataset.agency !== dragAgency) return; // reorder within same agency only
+        e.preventDefault(); e.dataTransfer.dropEffect = "move";
+        const after = rowAfterPoint(group, e.clientY);
+        clearDropMarks();
+        if (after == null) { const last = group.querySelector(".prof-row:last-child"); if (last && last.dataset.slug !== dragSlug) last.classList.add("drop-after"); }
+        else if (after.dataset.slug !== dragSlug) after.classList.add("drop-before");
+      });
+      group.addEventListener("drop", async e => {
+        if (dragSlug == null || group.dataset.agency !== dragAgency) return;
+        e.preventDefault();
+        const dragged = group.querySelector(`.prof-row[data-slug="${dragSlug}"]`); if (!dragged) return;
+        const after = rowAfterPoint(group, e.clientY);
+        if (after == null) group.appendChild(dragged); else group.insertBefore(dragged, after);
+        clearDropMarks();
+        await persistGroupOrder(group);
+      });
+    });
   }
 
   // ---------- MODAL ----------
@@ -1132,7 +1188,7 @@
   // Babysitter roster active/inactive state (live)
   onSnapshot(collection(db, "babysitters"), (snap) => {
     const m = {};
-    snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false }; });
+    snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false, order: typeof x.order === "number" ? x.order : undefined }; });
     babysitterDocs = m;
     rebuildNameIndex();
     renderGrid();
