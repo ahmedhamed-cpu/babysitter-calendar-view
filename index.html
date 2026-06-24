@@ -53,6 +53,11 @@
   .conflict { outline:2px solid #ef4444; outline-offset:-1px; }
   .util-track { height:8px; border-radius:999px; background:var(--border); overflow:hidden; }
   .util-fill { height:100%; border-radius:999px; }
+  .switch { width:42px; height:24px; border-radius:999px; background:var(--border); position:relative; cursor:pointer; transition:background .15s ease; flex:0 0 auto; }
+  .switch[data-on="true"] { background:#10b981; }
+  .switch .knob { position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s ease; box-shadow:0 1px 2px rgba(0,0,0,.3); }
+  .switch[data-on="true"] .knob { left:21px; }
+  .prof-row.inactive { opacity:.55; }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
   .kpi .k-label { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); white-space:nowrap; }
   .kpi .k-val { font-size:19px; font-weight:700; line-height:1.1; }
@@ -109,6 +114,7 @@
       <button id="view-week" class="view-btn px-4 h-9 text-sm font-medium border-l brd" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn px-4 h-9 text-sm font-medium border-l brd" data-view="range" data-active="false">Range</button>
       <button id="view-util" class="view-btn px-4 h-9 text-sm font-medium border-l brd" data-view="utilisation" data-active="false">Utilisation</button>
+      <button id="view-profiles" class="view-btn px-4 h-9 text-sm font-medium border-l brd" data-view="profiles" data-active="false">Profiles</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
       <span>From</span><input type="date" id="range-from" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
@@ -158,6 +164,13 @@
       <div class="grid-scroll overflow-x-auto"><div id="util-grid" class="min-w-[860px]"></div></div>
     </div>
     <p id="util-note" class="text-xs muted2 mt-3"></p>
+  </div>
+
+  <!-- BABYSITTER PROFILES -->
+  <div id="profiles-container" class="hidden">
+    <div id="profiles-summary" class="flex flex-wrap gap-2 mb-4"></div>
+    <div id="profiles-list"></div>
+    <p id="profiles-note" class="text-xs muted2 mt-3"></p>
   </div>
 
   <div id="empty-state" class="hidden text-center py-16 muted2">
@@ -210,7 +223,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, collection, onSnapshot, doc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyB5OShyCIKMqu5RijdCKhohu4uB7yzARIY",
@@ -230,8 +243,8 @@
   const PIXELS_PER_HOUR = 90;
   const DEFAULT_DURATION_MIN = 240;
   const ENGAGEMENT_LOOKAHEAD_DAYS = 28; // up to 4 weeks ahead
-  // Utilisation = booked hours ÷ (capacity per day × days in period). Tune to your standard shift.
-  const CAPACITY_HOURS_PER_DAY = 8;
+  // Utilisation = booked hours ÷ (capacity per day × days in period). 12h shift = 100%.
+  const CAPACITY_HOURS_PER_DAY = 12;
 
   const FIELD = {
     orderStatus: ["Order Status","OrderStatus","Order_Status","order_status","orderStatus","Status"],
@@ -246,6 +259,82 @@
     b2bPartner:  ["B2B Partner","B2B Partner Name","B2B_Partner","b2bPartner","B2B","B2B Name","Corporate Partner","Corporate Client","Corporate","Account Name","Company Name","Client Company"]
   };
 
+  // Full active roster (defaults). Active/inactive state lives in the Firestore
+  // "babysitters" collection; this list provides names/agency/city + lets idle
+  // (zero-booking) babysitters still appear in utilisation.
+  const ROSTER = [
+    ...["Honey Lane Tamondong","Elma De Jesus","Ellah Baico","Saguira","Mona","Norfaisa","Rechelle","Ruffa","Criselda","Jenifer"].map(n => ({ name:n, agency:"Helpful agency", city:"Jeddah" })),
+    ...[
+      { name:"Mary Donna Manjares Valdez", iqama:"Expired",  schedule:"10 AM–10 PM, off Fri" },
+      { name:"Warda Inog Zacaria",          iqama:"Expired",  schedule:"7 AM–7 PM, off Fri" },
+      { name:"Salvacion Dumaya Blam",       iqama:"Active",   schedule:"7 AM–7 PM" },
+      { name:"Maribel Jimenez",             iqama:"Expired",  schedule:"7:30 AM–3:30 PM, off Sat" },
+      { name:"Bai Alleha Manonsol",         iqama:"Active",   schedule:"10 AM–6 PM, off Thu/Fri/Sat" },
+      { name:"Mary Ann Demeterio",          iqama:"Active",   schedule:"Hourly" },
+      { name:"Lilibeth Nortes",             iqama:"Active",   schedule:"11 PM–7 AM Thu/Fri (Jun 20–Jul 15)" },
+      { name:"Maria Fe Tating",             iqama:"No iqama", schedule:"Hourly" },
+      { name:"Margie Gabaisen",             iqama:"No iqama", schedule:"7 PM–7 AM Fri" },
+      { name:"Gillian Traso Paraiso",       iqama:"Active",   schedule:"Hourly" },
+      { name:"Evangeline Pelosas",          iqama:"Expired",  schedule:"Hourly" },
+      { name:"Ags Kindek Mangelen",         iqama:"Active",   schedule:"4 PM–4 AM Sun (Jun 25–30)" },
+      { name:"Maricel Alaman",              iqama:"No iqama", schedule:"Hourly" },
+      { name:"Maricel Bulan",               iqama:"Expired",  schedule:"Hourly" },
+      { name:"Juvy Lapuz Somera",           iqama:"Expired",  schedule:"Hourly" },
+      { name:"Nenita Regalario",            iqama:"Expired",  schedule:"Hourly" },
+      { name:"Ramla Saban",                 iqama:"Expired",  schedule:"Hourly" }
+    ].map(r => ({ ...r, agency:"Helpful agency", city:"Riyadh" })),
+    ...["Evangeline Allera Ocampo","Jean Montesilio","Lorena B. Abog","Mary Kaye","Marcelyn Matayao","Rosario Gajardo","Veronica Fidalgo"].map(n => ({ name:n, agency:"Tamaam homecare", city:"" }))
+  ];
+  const slug = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const rosterMap = {}; ROSTER.forEach(r => { rosterMap[slug(r.name)] = r; });
+
+  // ---------- FUZZY NAME IDENTITY ----------
+  // Minor spelling differences = same person. Different last name = different person.
+  function editDistance(a, b) {
+    a = a || ""; b = b || ""; const m = a.length, n = b.length;
+    if (!m) return n; if (!n) return m;
+    let prev = Array.from({ length: n + 1 }, (_, i) => i), cur = new Array(n + 1);
+    for (let i = 1; i <= m; i++) { cur[0] = i; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1)); [prev, cur] = [cur, prev]; }
+    return prev[n];
+  }
+  const normFull = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const toks = s => String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean);
+  const fuzzyEq = (a, b) => { const m = Math.max(a.length, b.length); if (!m) return true; return editDistance(a, b) <= Math.max(1, Math.floor(0.34 * m)); };
+  function samePerson(n1, n2) {
+    const f1 = normFull(n1), f2 = normFull(n2);
+    if (f1 === f2) return true;
+    if ((f1.length >= 4 && f2.startsWith(f1)) || (f2.length >= 4 && f1.startsWith(f2))) return true; // truncated surname
+    const t1 = toks(n1), t2 = toks(n2); if (!t1.length || !t2.length) return false;
+    const fa = t1[0], fb = t2[0], la = t1[t1.length-1], lb = t2[t2.length-1];
+    const firstMatch = fa === fb || fuzzyEq(fa, fb) || fa.startsWith(fb) || fb.startsWith(fa);
+    const lastMatch = la === lb || fuzzyEq(la, lb);
+    return firstMatch && lastMatch;
+  }
+  let nameKeyMap = new Map();   // normalized raw name -> canonical key
+  let nameDisplay = new Map();  // canonical key -> display name
+  const normName = s => String(s).toLowerCase().replace(/\s+/g, " ").trim();
+  function rebuildNameIndex() {
+    const raws = new Set();
+    ROSTER.forEach(r => raws.add(r.name));
+    Object.values(babysitterDocs).forEach(d => { if (d.name) raws.add(d.name); });
+    allBookings.forEach(b => { const n = fieldVal(b.data, FIELD.nurseName); if (n) raws.add(String(n)); });
+    const names = [...raws]; const parent = {};
+    const find = x => parent[x] === x ? x : (parent[x] = find(parent[x]));
+    names.forEach(n => parent[n] = n);
+    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) if (samePerson(names[i], names[j])) parent[find(names[i])] = find(names[j]);
+    const groups = {}; names.forEach(n => { const r = find(n); (groups[r] = groups[r] || []).push(n); });
+    const rosterSet = new Set(ROSTER.map(r => r.name));
+    nameKeyMap = new Map(); nameDisplay = new Map();
+    Object.values(groups).forEach(grp => {
+      const canon = grp.find(n => rosterSet.has(n)) || grp.slice().sort((a, b) => b.length - a.length || a.localeCompare(b))[0];
+      const key = slug(canon);
+      grp.forEach(n => nameKeyMap.set(normName(n), key));
+      nameDisplay.set(key, canon);
+    });
+  }
+  const idKey = name => nameKeyMap.get(normName(name)) || slug(name);
+  const displayName = name => nameDisplay.get(idKey(name)) || name;
+
   // ---------- FIELD ACCESS ----------
   const normKey = k => String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
   function fieldVal(data, candidates) {
@@ -258,35 +347,42 @@
   // ---------- UNIQUE COLOURS (one distinct hue per nurse) ----------
   let hueRegistry = {};
   function rebuildColors() {
-    const names = [...new Set(allBookings.map(b => fieldVal(b.data, FIELD.nurseName) || "Unassigned"))]
-      .filter(n => n !== "Unassigned").sort();
+    const keys = [...new Set(allBookings.map(b => idKey(fieldVal(b.data, FIELD.nurseName) || "Unassigned")))].filter(k => k !== "unassigned").sort();
     hueRegistry = {};
-    names.forEach((n, i) => { hueRegistry[n] = (i * 137.508) % 360; }); // golden-angle spacing
+    keys.forEach((k, i) => { hueRegistry[k] = (i * 137.508) % 360; }); // golden-angle spacing
   }
   function hueFor(name) {
-    if (hueRegistry[name] != null) return hueRegistry[name];
-    let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    const k = idKey(name);
+    if (hueRegistry[k] != null) return hueRegistry[k];
+    let h = 0; for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0;
     return h % 360;
   }
-  function colorFor(name) { return name === "Unassigned" ? "hsl(215,12%,58%)" : `hsl(${hueFor(name)},62%,50%)`; }
-  function colorSoft(name, a) { return name === "Unassigned" ? `hsla(215,12%,58%,${a})` : `hsla(${hueFor(name)},66%,52%,${a})`; }
+  function colorFor(name) { return idKey(name) === "unassigned" ? "hsl(215,12%,58%)" : `hsl(${hueFor(name)},62%,50%)`; }
+  function colorSoft(name, a) { return idKey(name) === "unassigned" ? `hsla(215,12%,58%,${a})` : `hsla(${hueFor(name)},66%,52%,${a})`; }
 
   const statusColor = { Attended:"#10b981", Absent:"#f43f5e", "Sick Leave":"#f59e0b", "No Show":"#fb923c" };
   function hexA(hex, a) { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return `rgba(${r},${g},${b},${a})`; }
 
   const ENG_COLOR = { Monthly:"#8b5cf6", Weekly:"#3b82f6", Daily:"#0ea5a3", Available:"#94a3b8" };
   function engBadge(name) {
-    const e = engagementMap[name] || "Available", c = ENG_COLOR[e];
+    const e = engagementOf(name), c = ENG_COLOR[e];
     return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(c,0.16)};color:${c}">${e}</span>`;
   }
 
+  // ---------- TIME ZONE (Asia/Riyadh, fixed UTC+3, no DST) ----------
+  // Convention: Date objects carry Riyadh wall-clock in their UTC fields.
+  // Build with makeWall(); read/format with getUTC* / timeZone:"UTC".
+  const TZ_OFFSET_MS = 3 * 3600000;
+  const riyadhParts = instant => { const r = new Date(instant.getTime() + TZ_OFFSET_MS); return { y:r.getUTCFullYear(), mo:r.getUTCMonth(), d:r.getUTCDate(), h:r.getUTCHours(), mi:r.getUTCMinutes() }; };
+  const nowR = () => new Date(Date.now() + TZ_OFFSET_MS);
+  const makeWall = (y, mo, d, h, mi) => new Date(Date.UTC(y, mo, d, h || 0, mi || 0));
+
   // ---------- DATE / TIME PARSING ----------
-  function fromDate(dt, hasTime) { return { y:dt.getFullYear(), mo:dt.getMonth(), d:dt.getDate(), h:dt.getHours(), mi:dt.getMinutes(), hasTime }; }
   function extractDateParts(raw) {
     if (raw === undefined || raw === null || raw === "") return null;
-    if (typeof raw.toDate === "function") { const dt = raw.toDate(); return isNaN(dt) ? null : fromDate(dt, true); }
-    if (typeof raw === "object") { const s = raw.seconds ?? raw._seconds; if (typeof s === "number") { const dt = new Date(s*1000); return isNaN(dt)?null:fromDate(dt,true);} return null; }
-    if (typeof raw === "number") { const ms = raw < 1e12 ? raw*1000 : raw; const dt = new Date(ms); return isNaN(dt)?null:fromDate(dt,true); }
+    if (typeof raw.toDate === "function") { const dt = raw.toDate(); if (isNaN(dt)) return null; return { ...riyadhParts(dt), hasTime:true }; }
+    if (typeof raw === "object") { const s = raw.seconds ?? raw._seconds; if (typeof s === "number") return { ...riyadhParts(new Date(s*1000)), hasTime:true }; return null; }
+    if (typeof raw === "number") { const ms = raw < 1e12 ? raw*1000 : raw; const dt = new Date(ms); if (isNaN(dt)) return null; return { ...riyadhParts(dt), hasTime:true }; }
     const s = String(raw).trim();
     let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/);
     if (m) return { y:+m[1], mo:+m[2]-1, d:+m[3], h:m[4]!=null?+m[4]:0, mi:m[5]!=null?+m[5]:0, hasTime:m[4]!=null };
@@ -296,13 +392,13 @@
       if (a>12) { day=a; mo=b; } else if (b>12) { day=b; mo=a; } else { if (AMBIGUOUS_DATE_ORDER==="MDY"){mo=a;day=b;} else {day=a;mo=b;} }
       return { y, mo:mo-1, d:day, h:m[4]!=null?+m[4]:0, mi:m[5]!=null?+m[5]:0, hasTime:m[4]!=null };
     }
-    const dt = new Date(s); if (!isNaN(dt)) return fromDate(dt, /\d{1,2}:\d{2}/.test(s));
+    const dt = new Date(s); if (!isNaN(dt)) return { ...riyadhParts(dt), hasTime:/\d{1,2}:\d{2}/.test(s) };
     return null;
   }
   function extractTimeParts(raw) {
     if (raw === undefined || raw === null || raw === "") return null;
-    if (typeof raw.toDate === "function") { const dt = raw.toDate(); return isNaN(dt)?null:{h:dt.getHours(),mi:dt.getMinutes()}; }
-    if (typeof raw === "object") { const s = raw.seconds ?? raw._seconds; if (typeof s==="number"){const dt=new Date(s*1000); return {h:dt.getHours(),mi:dt.getMinutes()};} return null; }
+    if (typeof raw.toDate === "function") { const dt = raw.toDate(); if (isNaN(dt)) return null; const p = riyadhParts(dt); return { h:p.h, mi:p.mi }; }
+    if (typeof raw === "object") { const s = raw.seconds ?? raw._seconds; if (typeof s==="number"){ const p = riyadhParts(new Date(s*1000)); return { h:p.h, mi:p.mi }; } return null; }
     const s = String(raw).trim();
     let m = s.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
     if (m) { let h=+m[1], mi=+m[2]; const ap=m[3]&&m[3].toLowerCase(); if(ap==="pm"&&h<12)h+=12; if(ap==="am"&&h===12)h=0; return {h,mi}; }
@@ -310,15 +406,15 @@
     if (m) { let h=+m[1]; const ap=m[2].toLowerCase(); if(ap==="pm"&&h<12)h+=12; if(ap==="am"&&h===12)h=0; return {h,mi:0}; }
     return null;
   }
-  // FIX: the date field (often a timestamp) may carry a junk time like 3 AM.
-  // Always prefer the explicit "Booked Slot Time" for the time-of-day.
+  // FIX: the date field (often a timestamp) may carry a junk time; always prefer
+  // the explicit "Booked Slot Time" for the time-of-day. All in Riyadh wall-clock.
   function parseSlotDateTime(data) {
     const dp = extractDateParts(fieldVal(data, FIELD.slotDate));
     if (!dp) return null;
     let { y, mo, d, h, mi, hasTime } = dp;
     const t = extractTimeParts(fieldVal(data, FIELD.slotTime));
     if (t) { h = t.h; mi = t.mi; } else if (!hasTime) { h = 0; mi = 0; }
-    const dt = new Date(y, mo, d, h || 0, mi || 0);
+    const dt = makeWall(y, mo, d, h, mi);
     return isNaN(dt) ? null : dt;
   }
 
@@ -340,21 +436,22 @@
 
   // ---------- HELPERS ----------
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-  const fmtTime = t => t ? t.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}) : "—";
-  const fmtLong = dk => new Date(dk+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"});
-  function dateKey(d) { return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  function fmtTime(t) { if (!t) return "—"; const h = t.getUTCHours(), mi = t.getUTCMinutes(); const hh = h%12===0?12:(h>12?h-12:h); return hh + ":" + String(mi).padStart(2,"0") + " " + (h>=12?"PM":"AM"); }
+  const fmtLong = dk => new Date(dk+"T00:00:00Z").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric",timeZone:"UTC"});
+  const fmtStamp = iso => { const dt = new Date(iso); return isNaN(dt) ? "" : dt.toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",timeZone:"Asia/Riyadh"}); };
+  function dateKey(d) { return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0"); }
   const bDateKey = b => { const dt = parseSlotDateTime(b.data); return dt ? dateKey(dt) : null; };
   function spanDays(fromDk, toDk) {
-    const a = new Date(fromDk+"T00:00:00"), b = new Date(toDk+"T00:00:00");
+    const a = new Date(fromDk+"T00:00:00Z"), b = new Date(toDk+"T00:00:00Z");
     if (isNaN(a)||isNaN(b)||b<a) return [];
     const out=[]; const d=new Date(a); let guard=0;
-    while (d<=b && guard++<120) { out.push(new Date(d)); d.setDate(d.getDate()+1); }
+    while (d<=b && guard++<120) { out.push(new Date(d)); d.setUTCDate(d.getUTCDate()+1); }
     return out;
   }
   function weekDays(anchorDk) {
-    const sel = new Date(anchorDk+"T00:00:00"); const dow = (sel.getDay()+6)%7;
-    const mon = new Date(sel); mon.setDate(sel.getDate()-dow);
-    return Array.from({length:7}, (_,i)=>{ const d=new Date(mon); d.setDate(mon.getDate()+i); return d; });
+    const sel = new Date(anchorDk+"T00:00:00Z"); const dow = (sel.getUTCDay()+6)%7;
+    const mon = new Date(sel); mon.setUTCDate(sel.getUTCDate()-dow);
+    return Array.from({length:7}, (_,i)=>{ const d=new Date(mon); d.setUTCDate(mon.getUTCDate()+i); return d; });
   }
 
   // ---------- STATE ----------
@@ -364,16 +461,17 @@
   let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "";
   let engagementMap = {};
   let nurseMeta = {};                 // nurse -> { homecare }
+  let babysitterDocs = {};            // slug -> { slug, name, agency, city, active }
   const bookingById = new Map();      // id -> { id, data }
   const activeStatuses = new Set(["Pending","Attended","Absent","Sick Leave","No Show"]);
 
   const datePicker = document.getElementById("date-picker");
   const rangeFrom = document.getElementById("range-from");
   const rangeTo = document.getElementById("range-to");
-  const todayStr = () => dateKey(new Date());
+  const todayStr = () => dateKey(nowR());
   datePicker.value = todayStr();
   rangeFrom.value = todayStr();
-  { const t=new Date(); t.setDate(t.getDate()+13); rangeTo.value = dateKey(t); }
+  { const t = nowR(); t.setUTCDate(t.getUTCDate()+13); rangeTo.value = dateKey(t); }
 
   // ---------- ENGAGEMENT CLASSIFICATION ----------
   // Source of truth: the explicit booking-type column (Daily / Weekly / Monthly).
@@ -389,13 +487,13 @@
     return null;
   }
   function classifyAll(refDk) {
-    const ref = new Date((refDk || todayStr()) + "T00:00:00"); const refMs = +ref; const DAY = 86400000;
-    const lo = new Date(ref); lo.setDate(ref.getDate() - 45);
-    const hi = new Date(ref); hi.setDate(ref.getDate() + 45);
+    const ref = new Date((refDk || todayStr()) + "T00:00:00Z"); const refMs = +ref; const DAY = 86400000;
+    const lo = new Date(ref); lo.setUTCDate(ref.getUTCDate() - 45);
+    const hi = new Date(ref); hi.setUTCDate(ref.getUTCDate() + 45);
     const data = {};
     allBookings.forEach(b => {
       const dt = parseSlotDateTime(b.data); if (!dt || dt < lo || dt > hi) return;
-      const n = fieldVal(b.data, FIELD.nurseName) || "Unassigned";
+      const n = idKey(fieldVal(b.data, FIELD.nurseName) || "Unassigned");
       const e = normEngagement(fieldVal(b.data, FIELD.bookingType));
       const rec = data[n] || (data[n] = { Monthly:[], Weekly:[], Daily:[], any:[] });
       rec.any.push(+dt); if (e) rec[e].push(+dt);
@@ -416,6 +514,7 @@
   // ---------- FILTERS ----------
   function passNonStatus(b) {
     const d = b.data;
+    if (!isActive(fieldVal(d, FIELD.nurseName) || "")) return false; // deactivated babysitters hidden
     if (pkgFilter && String(fieldVal(d, FIELD.pkg) || "") !== pkgFilter) return false;
     if (hcFilter && String(fieldVal(d, FIELD.homecare) || "") !== hcFilter) return false;
     if (cityFilter && String(fieldVal(d, FIELD.city) || "") !== cityFilter) return false;
@@ -423,7 +522,7 @@
       const hay = ((fieldVal(d, FIELD.customer)||"")+" "+(fieldVal(d, FIELD.nurseName)||"")+" "+(fieldVal(d, FIELD.homecare)||"")+" "+(fieldVal(d, FIELD.city)||"")+" "+(fieldVal(d, FIELD.b2bPartner)||"")).toLowerCase();
       if (!hay.includes(searchText)) return false;
     }
-    if (engFilter) { const n = fieldVal(d, FIELD.nurseName) || "Unassigned"; if ((engagementMap[n]||"Available") !== engFilter) return false; }
+    if (engFilter) { if (engagementOf(fieldVal(d, FIELD.nurseName) || "Unassigned") !== engFilter) return false; }
     return true;
   }
   const passStatus = b => activeStatuses.has(b.data.status || "Pending");
@@ -444,19 +543,19 @@
     const counts = { Pending:0, Attended:0, Absent:0, "Sick Leave":0, "No Show":0 };
     scope.forEach(b => { counts[b.data.status || "Pending"]++; });
     const nurses = new Set(scope.map(b => fieldVal(b.data, FIELD.nurseName) || "Unassigned"));
-    const now = new Date();
+    const now = nowR();
     const attn = scope.filter(b => (b.data.status || "Pending") === "Pending" && (() => { const dt = parseSlotDateTime(b.data); return dt && dt < now; })()).length;
 
     // busiest hour (day) or busiest day (span)
     let busyLabel = "—";
     if (mode === "day") {
-      const tally = {}; scope.forEach(b => { const dt = parseSlotDateTime(b.data); if (dt) tally[dt.getHours()] = (tally[dt.getHours()]||0)+1; });
+      const tally = {}; scope.forEach(b => { const dt = parseSlotDateTime(b.data); if (dt) tally[dt.getUTCHours()] = (tally[dt.getUTCHours()]||0)+1; });
       const top = Object.entries(tally).sort((a,b)=>b[1]-a[1])[0];
       if (top) { const hh = +top[0]; const dh = hh%12===0?12:(hh>12?hh-12:hh); busyLabel = dh+(hh>=12?"PM":"AM")+" ("+top[1]+")"; }
     } else {
       const tally = {}; scope.forEach(b => { const k = bDateKey(b); if (k) tally[k]=(tally[k]||0)+1; });
       const top = Object.entries(tally).sort((a,b)=>b[1]-a[1])[0];
-      if (top) busyLabel = new Date(top[0]+"T00:00:00").toLocaleDateString("en-US",{weekday:"short",day:"numeric"})+" ("+top[1]+")";
+      if (top) busyLabel = new Date(top[0]+"T00:00:00Z").toLocaleDateString("en-US",{weekday:"short",day:"numeric",timeZone:"UTC"})+" ("+top[1]+")";
     }
 
     const statusTile = (label, key, hex) => {
@@ -487,14 +586,33 @@
   function buildNurseMeta() {
     const map = {};
     allBookings.forEach(b => {
-      const n = fieldVal(b.data, FIELD.nurseName) || "Unassigned";
+      const k = idKey(fieldVal(b.data, FIELD.nurseName) || "Unassigned");
       const hc = fieldVal(b.data, FIELD.homecare);
-      if (!map[n]) map[n] = { homecare: "" };
-      if (hc && !map[n].homecare) map[n].homecare = String(hc);
+      if (!map[k]) map[k] = { homecare: "" };
+      if (hc && !map[k].homecare) map[k].homecare = String(hc);
     });
     return map;
   }
-  const homeCareOf = name => (nurseMeta[name] && nurseMeta[name].homecare) || "";
+  const homeCareOf = name => { const m = nurseMeta[idKey(name)]; return (m && m.homecare) || ""; };
+  const engagementOf = name => engagementMap[idKey(name)] || "Available";
+
+  // A babysitter is active unless an explicit Firestore doc marks her inactive.
+  function isActive(name) { const d = babysitterDocs[idKey(name)]; return !d || d.active !== false; }
+  // Union of roster + Firestore docs + nurses seen in bookings.
+  function babysitterUniverse() {
+    const map = {};
+    const ensure = (key, name) => map[key] || (map[key] = { slug:key, name:displayName(name), agency:"", city:"", iqama:"", schedule:"", active:true });
+    ROSTER.forEach(r => { const e = ensure(idKey(r.name), r.name); if (!e.agency) e.agency = r.agency; if (!e.city) e.city = r.city || ""; if (r.iqama) e.iqama = r.iqama; if (r.schedule) e.schedule = r.schedule; });
+    allBookings.forEach(b => {
+      const nm = fieldVal(b.data, FIELD.nurseName) || ""; if (!nm) return;
+      const e = ensure(idKey(nm), nm);
+      if (!e.agency) { const h = fieldVal(b.data, FIELD.homecare); if (h) e.agency = String(h); }
+      if (!e.city) { const c = fieldVal(b.data, FIELD.city); if (c) e.city = String(c); }
+    });
+    Object.values(babysitterDocs).forEach(d => { const e = ensure(d.slug, d.name || d.slug); if (d.agency && !e.agency) e.agency = d.agency; if (d.city && !e.city) e.city = d.city; e.active = d.active !== false; });
+    return map;
+  }
+  function agencyColor(a) { const s = (a || "").toLowerCase(); if (s.includes("helpful")) return "#3b82f6"; if (s.includes("tamaam") || s.includes("tammam")) return "#0ea5a3"; return "#94a3b8"; }
 
   // ---------- SHARED BOOKING CARD ----------
   // Used by both the day timeline (absolute, width = duration) and the
@@ -509,11 +627,12 @@
     const customer = escapeHtml(fieldVal(d, FIELD.customer) || "Unknown");
     const pkg = escapeHtml(fieldVal(d, FIELD.pkg) || "—");
     const status = d.status || "Pending";
+    const auto = d.attendanceSource === "app-login" && status === "Attended";
     const city = fieldVal(d, FIELD.city);
     return (partner ? `<div class="text-[9px] font-bold uppercase tracking-wide truncate" style="color:var(--gold-dark)">&#129309; ${escapeHtml(String(partner))}</div>` : "") +
            `<div class="text-[11px] font-semibold truncate">${customer}</div>` +
            `<div class="text-[10px] muted truncate">${pkg}</div>` +
-           `<div class="text-[10px] muted2 truncate">${fmtTime(x.start)}–${fmtTime(x.end)} · ${fmtHours(x.dur)} · ${status}</div>` +
+           `<div class="text-[10px] muted2 truncate">${fmtTime(x.start)}–${fmtTime(x.end)} · ${fmtHours(x.dur)} · ${status}${auto ? ` <span title="auto-marked from app login">&#9889;</span>` : ""}</div>` +
            (city ? `<div class="text-[10px] muted2 truncate">&#128205; ${escapeHtml(String(city))}</div>` : "");
   }
   function cardTitle(x) {
@@ -558,12 +677,17 @@
     nurseMeta = buildNurseMeta();
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles") ? "none" : "flex";
+
+    const containers = ["day-container","span-container","util-container","profiles-container"];
+    const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
+
+    if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
 
     const scope = scopeNonStatus();
     renderKPI(scope, viewMode === "day" ? "day" : "span");
     const visible = scope.filter(passStatus);
 
-    const show = id => ["day-container","span-container","util-container"].forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
     if (viewMode === "day") { show("day-container"); renderDay(visible); }
     else if (viewMode === "utilisation") { show("util-container"); document.getElementById("empty-state").classList.add("hidden"); renderUtil(visible); }
     else { show("span-container"); document.getElementById("empty-state").classList.add("hidden"); renderSpan(visible); }
@@ -584,16 +708,17 @@
     const enriched = dayBookings.map(b => { const start = parseSlotDateTime(b.data); const dur = durationMin(b.data); return start ? { b, start, dur, end:new Date(start.getTime()+dur*60000) } : null; }).filter(Boolean);
 
     let minH = 8, maxH = 22;
-    enriched.forEach(x => { const sh = x.start.getHours()+x.start.getMinutes()/60; if (sh<minH) minH = Math.floor(sh); if (sh+x.dur/60>maxH) maxH = Math.ceil(sh+x.dur/60); });
+    enriched.forEach(x => { const sh = x.start.getUTCHours()+x.start.getUTCMinutes()/60; if (sh<minH) minH = Math.floor(sh); if (sh+x.dur/60>maxH) maxH = Math.ceil(sh+x.dur/60); });
     GRID_START_HOUR = Math.max(0, Math.min(8, minH));
     GRID_END_HOUR = Math.min(36, Math.max(22, maxH));
     renderTimeHeader();
 
-    const byNurse = {}; enriched.forEach(x => { const n = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; (byNurse[n]=byNurse[n]||[]).push(x); });
+    const groups = {}; enriched.forEach(x => { const raw = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; const k = idKey(raw); (groups[k] = groups[k] || { name: displayName(raw), items: [] }).items.push(x); });
     const gridW = (GRID_END_HOUR-GRID_START_HOUR)*PIXELS_PER_HOUR;
 
-    Object.keys(byNurse).sort().forEach(nurseName => {
-      const items = byNurse[nurseName].sort((a,b)=>a.start-b.start);
+    Object.keys(groups).sort((a,b) => groups[a].name.localeCompare(groups[b].name)).forEach(gk => {
+      const nurseName = groups[gk].name;
+      const items = groups[gk].items.sort((a,b)=>a.start-b.start);
       const conflict = new Set();
       for (let i=0;i<items.length;i++) for (let j=i+1;j<items.length;j++) if (items[i].start<items[j].end && items[j].start<items[i].end) { conflict.add(i); conflict.add(j); }
 
@@ -608,7 +733,7 @@
       for (let h=GRID_START_HOUR; h<GRID_END_HOUR; h++) { const ln = document.createElement("div"); ln.style.cssText = "position:absolute;top:0;bottom:0;border-right:1px solid var(--border-2);left:"+((h-GRID_START_HOUR)*PIXELS_PER_HOUR)+"px"; tl.appendChild(ln); }
 
       items.forEach((x, idx) => {
-        const sh = x.start.getHours()+x.start.getMinutes()/60;
+        const sh = x.start.getUTCHours()+x.start.getUTCMinutes()/60;
         const leftPx = (sh-GRID_START_HOUR)*PIXELS_PER_HOUR;
         const widthPx = Math.max((x.dur/60)*PIXELS_PER_HOUR, 64);
         const status = x.b.data.status || "Pending";
@@ -644,13 +769,13 @@
     const enriched = visible.map(b => { const start = parseSlotDateTime(b.data); if (!start) return null; const dur = durationMin(b.data); return { b, start, dur, end:new Date(start.getTime()+dur*60000) }; }).filter(x => x && keys.includes(dateKey(x.start)));
 
     if (viewMode === "week")
-      document.getElementById("subtitle").textContent = "Week of " + days[0].toLocaleDateString("en-US",{month:"long",day:"numeric"}) + " – " + days[6].toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+      document.getElementById("subtitle").textContent = "Week of " + days[0].toLocaleDateString("en-US",{month:"long",day:"numeric",timeZone:"UTC"}) + " – " + days[6].toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric",timeZone:"UTC"});
     else
-      document.getElementById("subtitle").textContent = "Range: " + (days[0]?days[0].toLocaleDateString("en-US",{month:"short",day:"numeric"}):"?") + " – " + (days[days.length-1]?days[days.length-1].toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"?") + " (" + days.length + " days)";
+      document.getElementById("subtitle").textContent = "Range: " + (days[0]?days[0].toLocaleDateString("en-US",{month:"short",day:"numeric",timeZone:"UTC"}):"?") + " – " + (days[days.length-1]?days[days.length-1].toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"}):"?") + " (" + days.length + " days)";
     document.getElementById("order-count").textContent = enriched.length + (enriched.length===1?" order":" orders");
 
-    const byNurse = {}; enriched.forEach(x => { const n = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; (byNurse[n]=byNurse[n]||[]).push(x); });
-    const nurses = Object.keys(byNurse).sort();
+    const groups = {}; enriched.forEach(x => { const raw = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; const k = idKey(raw); (groups[k] = groups[k] || { name: displayName(raw), items: [] }).items.push(x); });
+    const nurseKeys = Object.keys(groups).sort((a,b)=>groups[a].name.localeCompare(groups[b].name));
     const colW = days.length > 8 ? 150 : 172;
     const grid = document.getElementById("span-grid");
     grid.style.minWidth = (200 + days.length * colW) + "px";
@@ -660,17 +785,18 @@
     days.forEach((d,i) => {
       const isToday = keys[i] === todayStr();
       html += `<div class="week-day-head px-2 py-2 text-center border-r brd2 cursor-pointer" style="${cell}" data-date="${keys[i]}">
-        <div class="text-[11px] font-semibold" style="${isToday?"color:var(--gold-dark)":""}">${d.toLocaleDateString("en-US",{weekday:"short"})}</div>
-        <div class="text-[10px] muted2">${d.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div></div>`;
+        <div class="text-[11px] font-semibold" style="${isToday?"color:var(--gold-dark)":""}">${d.toLocaleDateString("en-US",{weekday:"short",timeZone:"UTC"})}</div>
+        <div class="text-[10px] muted2">${d.toLocaleDateString("en-US",{month:"short",day:"numeric",timeZone:"UTC"})}</div></div>`;
     });
     html += `</div>`;
 
-    if (nurses.length === 0) { grid.innerHTML = html + `<div class="text-center py-12 muted2 text-sm">No bookings match this period.</div>`; bindSpanClicks(); return; }
+    if (nurseKeys.length === 0) { grid.innerHTML = html + `<div class="text-center py-12 muted2 text-sm">No bookings match this period.</div>`; bindSpanClicks(); return; }
 
-    nurses.forEach(n => {
+    nurseKeys.forEach(gk => {
+      const n = groups[gk].name;
       html += `<div class="flex border-b brd items-stretch"><div class="w-[200px] shrink-0 px-3 py-2 flex items-center gap-1.5 border-r brd sticky left-0" style="background:var(--card)">${nurseLabelHTML(n, false)}</div>`;
       days.forEach((d,i) => {
-        const items = byNurse[n].filter(x => dateKey(x.start) === keys[i]).sort((a,b)=>a.start-b.start);
+        const items = groups[gk].items.filter(x => dateKey(x.start) === keys[i]).sort((a,b)=>a.start-b.start);
         const conflict = new Set();
         for (let a=0;a<items.length;a++) for (let b2=a+1;b2<items.length;b2++) if (items[a].start<items[b2].end && items[b2].start<items[a].end) { conflict.add(a); conflict.add(b2); }
         html += `<div class="px-1.5 py-1.5 border-r brd2" style="${cell}">`;
@@ -700,70 +826,132 @@
   // ---------- UTILISATION DASHBOARD (per babysitter, live) ----------
   function renderUtil(visible) {
     const keys = currentDayKeys(); const days = keys.length || 1; const keySet = new Set(keys);
-    const enriched = visible.map(b => { const start = parseSlotDateTime(b.data); if (!start) return null; return { b, start, dur:durationMin(b.data) }; }).filter(x => x && keySet.has(dateKey(x.start)));
+    const enriched = visible.map(b => { const start = parseSlotDateTime(b.data); if (!start) return null; return { b, start, dur:durationMin(b.data), s:idKey(fieldVal(b.data, FIELD.nurseName) || "") }; }).filter(x => x && keySet.has(dateKey(x.start)));
 
     document.getElementById("subtitle").textContent = "Utilisation · " + (keys[0]||"?") + " → " + (keys[keys.length-1]||"?") + " (" + days + " days)";
     document.getElementById("order-count").textContent = enriched.length + (enriched.length===1?" order":" orders");
 
-    const byNurse = {}; enriched.forEach(x => { const n = fieldVal(x.b.data, FIELD.nurseName) || "Unassigned"; (byNurse[n]=byNurse[n]||[]).push(x); });
+    const bySlug = {}; enriched.forEach(x => (bySlug[x.s]=bySlug[x.s]||[]).push(x));
+    const active = Object.values(babysitterUniverse()).filter(u => u.active);
     const capPeriod = CAPACITY_HOURS_PER_DAY * days;
 
-    const rows = Object.keys(byNurse).map(n => {
-      const items = byNurse[n];
+    const rows = active.map(u => {
+      const items = bySlug[u.slug] || [];
       const hours = items.reduce((s,x)=>s+x.dur/60,0);
       const daysWorked = new Set(items.map(x=>dateKey(x.start))).size;
       const util = capPeriod ? Math.round(hours/capPeriod*100) : 0;
-      const cities = [...new Set(items.map(x=>fieldVal(x.b.data,FIELD.city)).filter(Boolean).map(String))];
-      return { n, hours:Math.round(hours*10)/10, daysWorked, bookings:items.length, util, cities };
-    }).sort((a,b) => b.util-a.util || b.hours-a.hours);
+      return { name:u.name, agency:u.agency, city:u.city, bookings:items.length, daysWorked, hours:Math.round(hours*10)/10, util };
+    }).sort((a,b) => b.util-a.util || b.hours-a.hours || a.name.localeCompare(b.name));
 
     const totalHours = Math.round(rows.reduce((s,r)=>s+r.hours,0)*10)/10;
+    const working = rows.filter(r=>r.bookings>0).length;
     const avgUtil = rows.length ? Math.round(rows.reduce((s,r)=>s+r.util,0)/rows.length) : 0;
-    const low = rows.filter(r=>r.util<25).length, over = rows.filter(r=>r.util>100).length;
+    const idle = rows.filter(r=>r.bookings===0).length;
+    const over = rows.filter(r=>r.util>100).length;
     const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
     document.getElementById("util-summary").innerHTML =
-      tile("Babysitters", rows.length) + tile("Total booked hrs", totalHours) + tile("Avg utilisation", avgUtil+"%") +
-      tile("Top", rows[0] ? escapeHtml(rows[0].n.split(" ")[0])+" ("+rows[0].util+"%)" : "—") +
-      tile("Low (&lt;25%)", low, low?"#f59e0b":"") + tile("Over 100%", over, over?"#ef4444":"");
+      tile("Active babysitters", rows.length) + tile("Working", working) + tile("Idle (0 bookings)", idle, idle?"#ef4444":"") +
+      tile("Total booked hrs", totalHours) + tile("Avg utilisation", avgUtil+"%") + tile("Over 100%", over, over?"#f59e0b":"");
 
-    const utilColor = u => u>100 ? "#ef4444" : (u>=30 ? "#10b981" : "#94a3b8");
+    const utilColor = u => u<=0 ? "#cbd5e1" : (u>100 ? "#ef4444" : (u>=30 ? "#10b981" : "#94a3b8"));
     let html = `<div class="flex border-b brd surface sticky top-0 z-10 text-[11px] uppercase tracking-wide muted2 font-semibold">
-      <div class="w-[220px] shrink-0 px-3 py-2 border-r brd">Babysitter</div>
-      <div class="w-[150px] shrink-0 px-3 py-2 border-r brd2">Home care</div>
-      <div class="flex-1 min-w-[120px] px-3 py-2 border-r brd2">Cities</div>
+      <div class="w-[210px] shrink-0 px-3 py-2 border-r brd">Babysitter</div>
+      <div class="w-[140px] shrink-0 px-3 py-2 border-r brd2">Agency</div>
+      <div class="w-[110px] shrink-0 px-3 py-2 border-r brd2">City</div>
       <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2">Bookings</div>
       <div class="w-[70px] shrink-0 px-3 py-2 text-center border-r brd2">Days</div>
       <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2">Hours</div>
-      <div class="w-[200px] shrink-0 px-3 py-2">Utilisation</div></div>`;
+      <div class="w-[210px] shrink-0 px-3 py-2">Utilisation</div></div>`;
 
-    if (!rows.length) { document.getElementById("util-grid").innerHTML = html + `<div class="text-center py-12 muted2 text-sm">No bookings in this period.</div>`; document.getElementById("util-note").textContent = ""; return; }
+    if (!rows.length) { document.getElementById("util-grid").innerHTML = html + `<div class="text-center py-12 muted2 text-sm">No active babysitters.</div>`; document.getElementById("util-note").textContent = ""; return; }
 
     rows.forEach(r => {
-      const eng = engagementMap[r.n] || "Available", ec = ENG_COLOR[eng];
-      html += `<div class="flex border-b brd items-center text-sm">
-        <div class="w-[220px] shrink-0 px-3 py-2 flex items-center gap-1.5 border-r brd">
-          <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(r.n)}"></span>
-          <span class="font-medium truncate">${escapeHtml(r.n)}</span>
-          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ml-auto" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span></div>
-        <div class="w-[150px] shrink-0 px-3 py-2 border-r brd2 truncate muted">${escapeHtml(homeCareOf(r.n)||"—")}</div>
-        <div class="flex-1 min-w-[120px] px-3 py-2 border-r brd2 truncate muted" title="${escapeHtml(r.cities.join(', '))}">${r.cities.length?escapeHtml(r.cities.join(", ")):"—"}</div>
+      const eng = engagementOf(r.name), ec = ENG_COLOR[eng];
+      const ac = agencyColor(r.agency);
+      html += `<div class="flex border-b brd items-center text-sm${r.bookings===0?" muted":""}">
+        <div class="w-[210px] shrink-0 px-3 py-2 flex items-center gap-1.5 border-r brd">
+          <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(r.name)}"></span>
+          <span class="font-medium truncate" style="color:var(--text)">${escapeHtml(r.name)}</span>
+          ${r.bookings ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ml-auto" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>` : `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ml-auto" style="background:${hexA('#94a3b8',0.16)};color:#94a3b8">idle</span>`}</div>
+        <div class="w-[140px] shrink-0 px-3 py-2 border-r brd2 truncate"><span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style="background:${hexA(ac,0.14)};color:${ac}">${escapeHtml(r.agency||"—")}</span></div>
+        <div class="w-[110px] shrink-0 px-3 py-2 border-r brd2 truncate muted">${escapeHtml(r.city||"—")}</div>
         <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2">${r.bookings}</div>
         <div class="w-[70px] shrink-0 px-3 py-2 text-center border-r brd2">${r.daysWorked}</div>
         <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2 font-semibold">${r.hours}</div>
-        <div class="w-[200px] shrink-0 px-3 py-2"><div class="flex items-center gap-2">
+        <div class="w-[210px] shrink-0 px-3 py-2"><div class="flex items-center gap-2">
           <div class="util-track flex-1"><div class="util-fill" style="width:${Math.min(100,r.util)}%;background:${utilColor(r.util)}"></div></div>
           <span class="text-xs font-semibold" style="color:${utilColor(r.util)}">${r.util}%</span></div></div></div>`;
     });
     document.getElementById("util-grid").innerHTML = html;
-    document.getElementById("util-grid").style.minWidth = "860px";
-    document.getElementById("util-note").innerHTML = `Utilisation = booked hours ÷ (capacity <b>${CAPACITY_HOURS_PER_DAY}h/day</b> × ${days} days). Tune <code>CAPACITY_HOURS_PER_DAY</code> near the top of the file. Period = the From/To dates above; updates live with Firestore.`;
+    document.getElementById("util-grid").style.minWidth = "900px";
+    document.getElementById("util-note").innerHTML = `Utilisation = booked hours ÷ (capacity <b>${CAPACITY_HOURS_PER_DAY}h/day</b> × ${days} days) — a 12-hour day reads 100%. Includes all <b>active</b> babysitters from the roster, so idle (0-booking) staff show too. Period = the From/To dates above; updates live with Firestore.`;
+  }
+
+  // ---------- BABYSITTER PROFILES ----------
+  function renderProfiles() {
+    const all = Object.values(babysitterUniverse()).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
+    const q = searchText;
+    const list = all.filter(u => !q || (u.name + " " + (u.agency||"") + " " + (u.city||"")).toLowerCase().includes(q));
+    const activeCount = all.filter(u => u.active).length;
+
+    document.getElementById("subtitle").textContent = "Babysitter profiles";
+    document.getElementById("order-count").textContent = activeCount + " active";
+
+    const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
+    const byAgency = {}; all.forEach(u => { const a = u.agency || "Unassigned agency"; byAgency[a] = (byAgency[a]||0)+1; });
+    document.getElementById("profiles-summary").innerHTML =
+      tile("Total babysitters", all.length) + tile("Active", activeCount, "#10b981") + tile("Inactive", all.length-activeCount, (all.length-activeCount)?"#ef4444":"") +
+      Object.keys(byAgency).sort().map(a => tile(a, byAgency[a])).join("");
+
+    // group filtered list by agency
+    const groups = {}; list.forEach(u => { const a = u.agency || "Unassigned agency"; (groups[a]=groups[a]||[]).push(u); });
+    let html = "";
+    Object.keys(groups).sort().forEach(a => {
+      const ac = agencyColor(a);
+      html += `<div class="card rounded-2xl overflow-hidden mb-4">
+        <div class="px-4 py-3 surface border-b brd flex items-center gap-2">
+          <span class="h-3 w-3 rounded-full" style="background:${ac}"></span>
+          <span class="font-semibold">${escapeHtml(a)}</span>
+          <span class="text-xs muted2">${groups[a].length}</span></div>`;
+      groups[a].forEach(u => {
+        const eng = engagementOf(u.name), ec = ENG_COLOR[eng];
+        const iqColor = /active/i.test(u.iqama) ? "#10b981" : (/expired/i.test(u.iqama) ? "#ef4444" : "#94a3b8");
+        const currentBadge = `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>`;
+        const iqamaBadge = u.iqama ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(iqColor,0.16)};color:${iqColor}" title="Iqama status">${escapeHtml(u.iqama)}</span>` : "";
+        html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}">
+          <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(u.name)}"></span>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium truncate">${escapeHtml(u.name)}</div>
+            <div class="text-[11px] muted2 truncate">${escapeHtml(u.city||"—")}${u.schedule?` · ${escapeHtml(u.schedule)}`:""}</div></div>
+          <div class="flex items-center gap-1.5 shrink-0">${currentBadge}${iqamaBadge}</div>
+          <span class="text-xs font-medium shrink-0 ${u.active?"text-emerald-600":"muted2"}">${u.active?"Active":"Inactive"}</span>
+          <div class="switch" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>
+        </div>`;
+      });
+      html += `</div>`;
+    });
+    document.getElementById("profiles-list").innerHTML = html || `<div class="text-center py-12 muted2 text-sm">No babysitters match.</div>`;
+    document.getElementById("profiles-note").innerHTML = `Toggle a babysitter off to hide her and all her bookings from every operational view — she stays in the data. Active/inactive is saved to the Firestore <b>babysitters</b> collection (needs rules to allow writes). Names must match between this roster and your Metabase nurse names to line up.`;
+
+    document.querySelectorAll("#profiles-list .switch").forEach(sw => sw.addEventListener("click", async () => {
+      const next = sw.getAttribute("data-on") !== "true";
+      sw.setAttribute("data-on", String(next)); // optimistic
+      try {
+        await setDoc(doc(db, "babysitters", sw.getAttribute("data-slug")),
+          { name: sw.getAttribute("data-name"), agency: sw.getAttribute("data-agency"), city: sw.getAttribute("data-city"), active: next }, { merge: true });
+      } catch (err) {
+        console.error("Failed to save profile:", err);
+        sw.setAttribute("data-on", String(!next));
+        alert("Could not save the on/off state.\nIf this says 'permission-denied', add Firestore rules for the 'babysitters' collection (see the rules I provided).");
+      }
+    }));
   }
 
   // ---------- MODAL ----------
   const modal = document.getElementById("status-modal");
   function openModal(booking) {
     activeModalDocId = booking.id; const d = booking.data;
-    document.getElementById("modal-nurse-name").textContent = fieldVal(d, FIELD.nurseName) || "Unassigned";
+    document.getElementById("modal-nurse-name").textContent = displayName(fieldVal(d, FIELD.nurseName) || "Unassigned");
     document.getElementById("modal-customer-name").textContent = fieldVal(d, FIELD.customer) || "Unknown customer";
     document.getElementById("modal-order-id").textContent = booking.id;
     const dt = parseSlotDateTime(d); const dur = durationMin(d);
@@ -773,14 +961,15 @@
     document.getElementById("modal-homecare").textContent = homeCareOf(fieldVal(d, FIELD.nurseName) || "Unassigned") || fieldVal(d, FIELD.homecare) || "—";
     document.getElementById("modal-city").textContent = fieldVal(d, FIELD.city) || "—";
     document.getElementById("modal-b2b").textContent = fieldVal(d, FIELD.b2bPartner) || "—";
-    { const raw = fieldVal(d, FIELD.bookingType); const tagged = engagementMap[fieldVal(d, FIELD.nurseName) || "Unassigned"] || "—";
+    { const raw = fieldVal(d, FIELD.bookingType); const tagged = engagementOf(fieldVal(d, FIELD.nurseName) || "Unassigned");
       document.getElementById("modal-btype").textContent = raw ? (String(raw) + " · tagged " + tagged) : ("tagged " + tagged); }
-    document.getElementById("modal-current-status").textContent = d.status || "Pending";
-    document.getElementById("modal-updated").textContent = d.statusUpdatedAt ? new Date(d.statusUpdatedAt).toLocaleString("en-US") : "—";
+    const srcLabel = s => s === "app-login" ? "auto · app login" : (s === "dashboard" ? "dashboard" : (s || ""));
+    document.getElementById("modal-current-status").textContent = (d.status || "Pending") + (d.attendanceSource ? "  ·  " + srcLabel(d.attendanceSource) : "");
+    document.getElementById("modal-updated").textContent = d.statusUpdatedAt ? fmtStamp(d.statusUpdatedAt) : "—";
 
     const hist = Array.isArray(d.statusHistory) ? d.statusHistory.slice(-3).reverse() : [];
     const box = document.getElementById("modal-history"), list = document.getElementById("modal-history-list");
-    if (hist.length) { box.classList.remove("hidden"); list.innerHTML = hist.map(h => `<div>• ${escapeHtml(h.status)} <span class="muted2">— ${h.at?new Date(h.at).toLocaleString("en-US"):""}</span></div>`).join(""); }
+    if (hist.length) { box.classList.remove("hidden"); list.innerHTML = hist.map(h => `<div>• ${escapeHtml(h.status)}${h.source?` <span class="muted2">(${escapeHtml(srcLabel(h.source))})</span>`:""} <span class="muted2">— ${h.at?fmtStamp(h.at):""}</span></div>`).join(""); }
     else box.classList.add("hidden");
 
     modal.classList.remove("hidden");
@@ -813,13 +1002,14 @@
   datePicker.addEventListener("change", renderGrid);
   rangeFrom.addEventListener("change", renderGrid);
   rangeTo.addEventListener("change", renderGrid);
-  function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00"); d.setDate(d.getDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
+  function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
   function setView(mode) { viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid(); }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
   document.getElementById("view-week").addEventListener("click", () => setView("week"));
   document.getElementById("view-range").addEventListener("click", () => setView("range"));
   document.getElementById("view-util").addEventListener("click", () => setView("utilisation"));
+  document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
@@ -843,10 +1033,11 @@
     return bookings.map(b => {
       const d = b.data, start = parseSlotDateTime(d), dur = durationMin(d);
       const end = start ? new Date(start.getTime()+dur*60000) : null;
-      const hm = t => t ? String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0") : "";
+      const hm = t => t ? String(t.getUTCHours()).padStart(2,"0")+":"+String(t.getUTCMinutes()).padStart(2,"0") : "";
+      const nurse = fieldVal(d,FIELD.nurseName)||"";
       return { "Date":start?dateKey(start):"", "Start":hm(start), "End":hm(end), "Hours":Math.round(dur/60*100)/100,
-        "Nurse":fieldVal(d,FIELD.nurseName)||"", "Engagement":engagementMap[fieldVal(d,FIELD.nurseName)||"Unassigned"]||"Available",
-        "Customer":fieldVal(d,FIELD.customer)||"", "B2B Partner":fieldVal(d,FIELD.b2bPartner)||"", "City":fieldVal(d,FIELD.city)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(fieldVal(d,FIELD.nurseName)||"Unassigned")||"", "Package":fieldVal(d,FIELD.pkg)||"", "Booking Type":fieldVal(d,FIELD.bookingType)||"", "Status":d.status||"Pending",
+        "Nurse":nurse?displayName(nurse):"", "Engagement":engagementOf(nurse),
+        "Customer":fieldVal(d,FIELD.customer)||"", "B2B Partner":fieldVal(d,FIELD.b2bPartner)||"", "City":fieldVal(d,FIELD.city)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(nurse)||"", "Package":fieldVal(d,FIELD.pkg)||"", "Booking Type":fieldVal(d,FIELD.bookingType)||"", "Status":d.status||"Pending",
         "Updated At":d.statusUpdatedAt||"", "Order ID":b.id };
     });
   }
@@ -927,6 +1118,7 @@
     });
     allBookings = out;
     bookingById.clear(); out.forEach(b => bookingById.set(b.id, b));
+    rebuildNameIndex();
     rebuildColors();
     renderGrid();
   }, (error) => {
@@ -937,6 +1129,16 @@
     document.getElementById("subtitle").textContent = "Connection error — see banner above";
   });
 
+  // Babysitter roster active/inactive state (live)
+  onSnapshot(collection(db, "babysitters"), (snap) => {
+    const m = {};
+    snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false }; });
+    babysitterDocs = m;
+    rebuildNameIndex();
+    renderGrid();
+  }, (err) => { console.warn("babysitters listener:", err && err.code); });
+
+  rebuildNameIndex();
   renderGrid();
 </script>
 </body>
