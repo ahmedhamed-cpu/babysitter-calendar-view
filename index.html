@@ -496,6 +496,10 @@
   let babysitterDocs = {};            // slug -> { slug, name, agency, city, active }
   const bookingById = new Map();      // id -> { id, data }
   const activeStatuses = new Set(["Pending","Attended","Absent","Sick Leave","No Show"]);
+  // Any status not in this set (e.g. a bad value written by an upstream sync) is
+  // treated as "Pending" so it can never silently hide a booking from every view.
+  const KNOWN_STATUSES = new Set(["Pending","Attended","Absent","Sick Leave","No Show"]);
+  const normStatus = s => KNOWN_STATUSES.has(s) ? s : "Pending";
 
   const datePicker = document.getElementById("date-picker");
   const rangeFrom = document.getElementById("range-from");
@@ -558,7 +562,7 @@
     if (engFilter) { if (engagementOf(nurse || "Unassigned") !== engFilter) return false; }
     return true;
   }
-  const passStatus = b => activeStatuses.has(b.data.status || "Pending");
+  const passStatus = b => activeStatuses.has(normStatus(b.data.status));
 
   function currentDayKeys() {
     if (viewMode === "week") return weekDays(datePicker.value).map(dateKey);
@@ -574,10 +578,10 @@
   // ---------- KPI BAR ----------
   function renderKPI(scope, mode) {
     const counts = { Pending:0, Attended:0, Absent:0, "Sick Leave":0, "No Show":0 };
-    scope.forEach(b => { counts[b.data.status || "Pending"]++; });
+    scope.forEach(b => { counts[normStatus(b.data.status)]++; });
     const nurses = new Set(scope.map(b => fieldVal(b.data, FIELD.nurseName) || "Unassigned"));
     const now = nowR();
-    const attn = scope.filter(b => (b.data.status || "Pending") === "Pending" && (() => { const dt = parseSlotDateTime(b.data); return dt && dt < now; })()).length;
+    const attn = scope.filter(b => (normStatus(b.data.status)) === "Pending" && (() => { const dt = parseSlotDateTime(b.data); return dt && dt < now; })()).length;
 
     // busiest hour (day) or busiest day (span)
     let busyLabel = "—";
@@ -669,7 +673,7 @@
     const partner = fieldVal(d, FIELD.b2bPartner);
     const customer = escapeHtml(fieldVal(d, FIELD.customer) || "Unknown");
     const pkg = escapeHtml(fieldVal(d, FIELD.pkg) || "—");
-    const status = d.status || "Pending";
+    const status = normStatus(d.status);
     const auto = d.attendanceSource === "app-login" && status === "Attended";
     const city = fieldVal(d, FIELD.city);
     return (partner ? `<div class="text-[9px] font-bold uppercase tracking-wide truncate" style="color:var(--gold-dark)">&#129309; ${escapeHtml(String(partner))}</div>` : "") +
@@ -681,7 +685,7 @@
   function cardTitle(x) {
     const d = x.b.data; const hc = homeCareOf(fieldVal(d, FIELD.nurseName) || "Unassigned");
     const city = fieldVal(d, FIELD.city); const partner = fieldVal(d, FIELD.b2bPartner);
-    return `${partner?"["+partner+"] ":""}${fieldVal(d,FIELD.customer)||"Unknown"} • ${fieldVal(d,FIELD.pkg)||""}\n${fmtTime(x.start)}–${fmtTime(x.end)} (${fmtHours(x.dur)}) • ${d.status||"Pending"}${hc?"\nHome care: "+hc:""}${city?"\nCity: "+city:""}`;
+    return `${partner?"["+partner+"] ":""}${fieldVal(d,FIELD.customer)||"Unknown"} • ${fieldVal(d,FIELD.pkg)||""}\n${fmtTime(x.start)}–${fmtTime(x.end)} (${fmtHours(x.dur)}) • ${normStatus(d.status)}${hc?"\nHome care: "+hc:""}${city?"\nCity: "+city:""}`;
   }
   function nurseLabelHTML(nurseName, hasConflict) {
     const hc = homeCareOf(nurseName);
@@ -777,7 +781,7 @@
         const sh = x.start.getUTCHours()+x.start.getUTCMinutes()/60;
         const leftPx = (sh-GRID_START_HOUR)*PIXELS_PER_HOUR;
         const widthPx = Math.max((x.dur/60)*PIXELS_PER_HOUR, 64);
-        const status = x.b.data.status || "Pending";
+        const status = normStatus(x.b.data.status);
         const col = cardColors(status, nurseName);
         const block = document.createElement("div");
         block.className = "booking-block" + (conflict.has(idx) ? " conflict" : "");
@@ -843,7 +847,7 @@
         html += `<div class="px-1.5 py-1.5 border-r brd2" style="${cell}">`;
         if (items.length) {
           items.forEach((x,idx) => {
-            const col = cardColors(x.b.data.status || "Pending", n);
+            const col = cardColors(normStatus(x.b.data.status), n);
             html += `<div class="booking-card${conflict.has(idx)?" conflict":""}" data-id="${escapeHtml(x.b.id)}" title="${escapeHtml(cardTitle(x))}" style="background:${col.bg};border-left:4px solid ${col.border}">${cardInner(x)}</div>`;
           });
         } else html += `<div class="text-center muted2 text-xs py-2">&middot;</div>`;
@@ -1064,7 +1068,7 @@
     { const raw = fieldVal(d, FIELD.bookingType); const tagged = engagementOf(fieldVal(d, FIELD.nurseName) || "Unassigned");
       document.getElementById("modal-btype").textContent = raw ? (String(raw) + " · tagged " + tagged) : ("tagged " + tagged); }
     const srcLabel = s => s === "app-login" ? "auto · app login" : (s === "dashboard" ? "dashboard" : (s || ""));
-    document.getElementById("modal-current-status").textContent = (d.status || "Pending") + (d.attendanceSource ? "  ·  " + srcLabel(d.attendanceSource) : "");
+    document.getElementById("modal-current-status").textContent = (normStatus(d.status)) + (d.attendanceSource ? "  ·  " + srcLabel(d.attendanceSource) : "");
     document.getElementById("modal-updated").textContent = d.statusUpdatedAt ? fmtStamp(d.statusUpdatedAt) : "—";
 
     const hist = Array.isArray(d.statusHistory) ? d.statusHistory.slice(-3).reverse() : [];
@@ -1137,7 +1141,7 @@
       const nurse = fieldVal(d,FIELD.nurseName)||"";
       return { "Date":start?dateKey(start):"", "Start":hm(start), "End":hm(end), "Hours":Math.round(dur/60*100)/100,
         "Nurse":nurse?displayName(nurse):"", "Engagement":engagementOf(nurse),
-        "Customer":fieldVal(d,FIELD.customer)||"", "B2B Partner":fieldVal(d,FIELD.b2bPartner)||"", "City":fieldVal(d,FIELD.city)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(nurse)||"", "Package":fieldVal(d,FIELD.pkg)||"", "Booking Type":fieldVal(d,FIELD.bookingType)||"", "Status":d.status||"Pending",
+        "Customer":fieldVal(d,FIELD.customer)||"", "B2B Partner":fieldVal(d,FIELD.b2bPartner)||"", "City":fieldVal(d,FIELD.city)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(nurse)||"", "Package":fieldVal(d,FIELD.pkg)||"", "Booking Type":fieldVal(d,FIELD.bookingType)||"", "Status":normStatus(d.status),
         "Updated At":d.statusUpdatedAt||"", "Order ID":b.id };
     });
   }
@@ -1163,7 +1167,7 @@
     const dk = datePicker.value; const keys = new Set(currentDayKeys());
     const bk = allBookings.filter(b => passNonStatus(b) && keys.has(bDateKey(b)) && passStatus(b));
     const counts = { Pending:0, Attended:0, Absent:0, "Sick Leave":0, "No Show":0 };
-    bk.forEach(b => counts[b.data.status||"Pending"]++);
+    bk.forEach(b => counts[normStatus(b.data.status)]++);
     const marked = counts.Attended+counts.Absent+counts["Sick Leave"]+counts["No Show"];
     const attRate = marked ? Math.round(counts.Attended/marked*100) : 0;
     const byNurse = {}; bk.forEach(b => { const n = fieldVal(b.data,FIELD.nurseName)||"Unassigned"; (byNurse[n]=byNurse[n]||[]).push(b); });
@@ -1172,7 +1176,7 @@
     let rows = "";
     Object.keys(byNurse).sort().forEach(n => {
       const items = byNurse[n]; const hours = Math.round(items.reduce((s,b)=>s+durationMin(b.data)/60,0)*10)/10;
-      const c = { Attended:0, Absent:0, "Sick Leave":0, "No Show":0, Pending:0 }; items.forEach(b => c[b.data.status||"Pending"]++);
+      const c = { Attended:0, Absent:0, "Sick Leave":0, "No Show":0, Pending:0 }; items.forEach(b => c[normStatus(b.data.status)]++);
       rows += `<tr class="border-t brd"><td class="py-1.5 pr-2 font-medium">${escapeHtml(n)} ${engBadge(n)}</td>
         <td class="py-1.5 px-2 text-center">${items.length}</td><td class="py-1.5 px-2 text-center">${hours}</td>
         <td class="py-1.5 px-2 text-center text-emerald-600">${c.Attended}</td><td class="py-1.5 px-2 text-center text-rose-600">${c.Absent}</td>
@@ -1219,7 +1223,7 @@
         const data = rec.data();
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
         const hasNurse = nurse !== "" && nurse.toLowerCase() !== "unassigned";
-        if (!hasNurse && !data.status) return; // show only nurse-assigned (or already-tagged)
+        if (!hasNurse && normStatus(data.status) === "Pending") return; // show nurse-assigned (or genuinely status-tagged)
         if (seen.has(rec.id)) return; seen.add(rec.id);
         out.push({ id: rec.id, data });
       });
