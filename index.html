@@ -74,7 +74,9 @@
   .kpi-btn { cursor:pointer; transition:all .12s ease; }
   .kpi-btn[data-active="false"] { opacity:.4; }
   .kpi-btn:hover { border-color:var(--gold); }
-  select option { color:#1A2238; }
+  select option { color:#1A2238; background:#FFFFFF; }
+  body.dark select option { color:#e9e5d8; background:#171d2b; }
+  body.dark select { color:var(--text); }
   @media print {
     body * { visibility:hidden; }
     #summary-content, #summary-content * { visibility:visible; }
@@ -238,6 +240,10 @@
       <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
     </div>
     <p class="viewer-only text-xs muted2 italic">View-only access — marking attendance and status is limited to admins.</p>
+    <div id="modal-locations" class="mt-4">
+      <a id="modal-client-loc" target="_blank" rel="noopener noreferrer" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127968; Client location &amp; ETA</a>
+    </div>
+    <p id="modal-loc-none" class="hidden text-xs muted2 italic mt-3">No location link available for this booking.</p>
     <div id="modal-history" class="mt-4 hidden">
       <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-1">Recent changes</p>
       <div id="modal-history-list" class="text-xs muted space-y-0.5"></div>
@@ -287,7 +293,10 @@
     homecare:    ["Home Care","HomeCare","Home_Care","Home Care Name","HomeCareName","homeCare","Agency","Partner","Home Care Partner","Provider","Vendor"],
     city:        ["City","city","Emirate","emirate","Area","area","Location","location","Region","region","Zone","zone"],
     bookingType: ["Booking Type","BookingType","Booking_Type","bookingType","Babysitter Type","Booking Frequency","Frequency","Engagement","Engagement Type","Plan","Subscription","Recurrence","Daily/Monthly","Type"],
-    b2bPartner:  ["B2B Partner","B2B Partner Name","B2B_Partner","b2bPartner","B2B","B2B Name","Corporate Partner","Corporate Client","Corporate","Account Name","Company Name","Client Company"]
+    b2bPartner:  ["B2B Partner","B2B Partner Name","B2B_Partner","b2bPartner","B2B","B2B Name","Corporate Partner","Corporate Client","Corporate","Account Name","Company Name","Client Company"],
+    nurseStarted:   ["Nurse Started At (KSA)","Nurse Started At","NurseStartedAt","nurseStartedAt","Nurse Start Time","Nurse Login Time","Started At","Shift Started At"],
+    nurseLocation:  ["Nurse Live Location","Nurse Location","Nurse Map","Nurse Location URL","Nurse Live Location URL","Nurse Map URL","Live Location","Nurse ETA"],
+    clientLocation: ["Client Location","Customer Location","Client Map","Client Location URL","Customer Map","Map URL","Location URL","Address Map","Map Link","Client Map URL"]
   };
 
   // Full active roster (defaults). Active/inactive state lives in the Firestore
@@ -500,6 +509,21 @@
   // treated as "Pending" so it can never silently hide a booking from every view.
   const KNOWN_STATUSES = new Set(["Pending","Attended","Absent","Sick Leave","No Show"]);
   const normStatus = s => KNOWN_STATUSES.has(s) ? s : "Pending";
+  // A booking is auto-attended when the babysitter has a login/started timestamp.
+  // This derives attendance straight from the source column, so it works even if
+  // the sync didn't write the status field. A manual non-Pending status always wins.
+  function hasAppLogin(d) {
+    const v = fieldVal(d, FIELD.nurseStarted);
+    if (v === undefined || v === null) return false;
+    const s = String(v).trim();
+    return s !== "" && s !== "=" && s.toLowerCase() !== "null";
+  }
+  function effStatus(d) {
+    const s = effStatus(d);
+    if (s === "Pending" && hasAppLogin(d)) return "Attended";
+    return s;
+  }
+  const isAutoAttended = d => d.attendanceSource === "app-login" || (normStatus(d.status) === "Pending" && hasAppLogin(d));
 
   const datePicker = document.getElementById("date-picker");
   const rangeFrom = document.getElementById("range-from");
@@ -562,7 +586,7 @@
     if (engFilter) { if (engagementOf(nurse || "Unassigned") !== engFilter) return false; }
     return true;
   }
-  const passStatus = b => activeStatuses.has(normStatus(b.data.status));
+  const passStatus = b => activeStatuses.has(effStatus(b.data));
 
   function currentDayKeys() {
     if (viewMode === "week") return weekDays(datePicker.value).map(dateKey);
@@ -578,10 +602,10 @@
   // ---------- KPI BAR ----------
   function renderKPI(scope, mode) {
     const counts = { Pending:0, Attended:0, Absent:0, "Sick Leave":0, "No Show":0 };
-    scope.forEach(b => { counts[normStatus(b.data.status)]++; });
+    scope.forEach(b => { counts[effStatus(b.data)]++; });
     const nurses = new Set(scope.map(b => fieldVal(b.data, FIELD.nurseName) || "Unassigned"));
     const now = nowR();
-    const attn = scope.filter(b => (normStatus(b.data.status)) === "Pending" && (() => { const dt = parseSlotDateTime(b.data); return dt && dt < now; })()).length;
+    const attn = scope.filter(b => (effStatus(b.data)) === "Pending" && (() => { const dt = parseSlotDateTime(b.data); return dt && dt < now; })()).length;
 
     // busiest hour (day) or busiest day (span)
     let busyLabel = "—";
@@ -673,8 +697,8 @@
     const partner = fieldVal(d, FIELD.b2bPartner);
     const customer = escapeHtml(fieldVal(d, FIELD.customer) || "Unknown");
     const pkg = escapeHtml(fieldVal(d, FIELD.pkg) || "—");
-    const status = normStatus(d.status);
-    const auto = d.attendanceSource === "app-login" && status === "Attended";
+    const status = effStatus(d);
+    const auto = isAutoAttended(d) && status === "Attended";
     const city = fieldVal(d, FIELD.city);
     return (partner ? `<div class="text-[9px] font-bold uppercase tracking-wide truncate" style="color:var(--gold-dark)">&#129309; ${escapeHtml(String(partner))}</div>` : "") +
            `<div class="text-[11px] font-semibold truncate">${customer}</div>` +
@@ -685,7 +709,7 @@
   function cardTitle(x) {
     const d = x.b.data; const hc = homeCareOf(fieldVal(d, FIELD.nurseName) || "Unassigned");
     const city = fieldVal(d, FIELD.city); const partner = fieldVal(d, FIELD.b2bPartner);
-    return `${partner?"["+partner+"] ":""}${fieldVal(d,FIELD.customer)||"Unknown"} • ${fieldVal(d,FIELD.pkg)||""}\n${fmtTime(x.start)}–${fmtTime(x.end)} (${fmtHours(x.dur)}) • ${normStatus(d.status)}${hc?"\nHome care: "+hc:""}${city?"\nCity: "+city:""}`;
+    return `${partner?"["+partner+"] ":""}${fieldVal(d,FIELD.customer)||"Unknown"} • ${fieldVal(d,FIELD.pkg)||""}\n${fmtTime(x.start)}–${fmtTime(x.end)} (${fmtHours(x.dur)}) • ${effStatus(d)}${hc?"\nHome care: "+hc:""}${city?"\nCity: "+city:""}`;
   }
   function nurseLabelHTML(nurseName, hasConflict) {
     const hc = homeCareOf(nurseName);
@@ -781,7 +805,7 @@
         const sh = x.start.getUTCHours()+x.start.getUTCMinutes()/60;
         const leftPx = (sh-GRID_START_HOUR)*PIXELS_PER_HOUR;
         const widthPx = Math.max((x.dur/60)*PIXELS_PER_HOUR, 64);
-        const status = normStatus(x.b.data.status);
+        const status = effStatus(x.b.data);
         const col = cardColors(status, nurseName);
         const block = document.createElement("div");
         block.className = "booking-block" + (conflict.has(idx) ? " conflict" : "");
@@ -847,7 +871,7 @@
         html += `<div class="px-1.5 py-1.5 border-r brd2" style="${cell}">`;
         if (items.length) {
           items.forEach((x,idx) => {
-            const col = cardColors(normStatus(x.b.data.status), n);
+            const col = cardColors(effStatus(x.b.data), n);
             html += `<div class="booking-card${conflict.has(idx)?" conflict":""}" data-id="${escapeHtml(x.b.id)}" title="${escapeHtml(cardTitle(x))}" style="background:${col.bg};border-left:4px solid ${col.border}">${cardInner(x)}</div>`;
           });
         } else html += `<div class="text-center muted2 text-xs py-2">&middot;</div>`;
@@ -1068,13 +1092,20 @@
     { const raw = fieldVal(d, FIELD.bookingType); const tagged = engagementOf(fieldVal(d, FIELD.nurseName) || "Unassigned");
       document.getElementById("modal-btype").textContent = raw ? (String(raw) + " · tagged " + tagged) : ("tagged " + tagged); }
     const srcLabel = s => s === "app-login" ? "auto · app login" : (s === "dashboard" ? "dashboard" : (s || ""));
-    document.getElementById("modal-current-status").textContent = (normStatus(d.status)) + (d.attendanceSource ? "  ·  " + srcLabel(d.attendanceSource) : "");
+    document.getElementById("modal-current-status").textContent = (effStatus(d)) + (d.attendanceSource ? "  ·  " + srcLabel(d.attendanceSource) : "");
     document.getElementById("modal-updated").textContent = d.statusUpdatedAt ? fmtStamp(d.statusUpdatedAt) : "—";
 
     const hist = Array.isArray(d.statusHistory) ? d.statusHistory.slice(-3).reverse() : [];
     const box = document.getElementById("modal-history"), list = document.getElementById("modal-history-list");
     if (hist.length) { box.classList.remove("hidden"); list.innerHTML = hist.map(h => `<div>• ${escapeHtml(h.status)}${h.source?` <span class="muted2">(${escapeHtml(srcLabel(h.source))})</span>`:""} <span class="muted2">— ${h.at?fmtStamp(h.at):""}</span></div>`).join(""); }
     else box.classList.add("hidden");
+
+    // Client location link (from Map URL) for ETA checks
+    const isUrl = u => u && /^https?:\/\//i.test(String(u).trim());
+    const setLoc = (el, raw) => { if (isUrl(raw)) { el.href = String(raw).trim(); el.classList.remove("hidden"); } else { el.classList.add("hidden"); el.removeAttribute("href"); } };
+    const cLoc = fieldVal(d, FIELD.clientLocation);
+    setLoc(document.getElementById("modal-client-loc"), cLoc);
+    document.getElementById("modal-loc-none").classList.toggle("hidden", isUrl(cLoc));
 
     modal.classList.remove("hidden");
   }
@@ -1141,7 +1172,7 @@
       const nurse = fieldVal(d,FIELD.nurseName)||"";
       return { "Date":start?dateKey(start):"", "Start":hm(start), "End":hm(end), "Hours":Math.round(dur/60*100)/100,
         "Nurse":nurse?displayName(nurse):"", "Engagement":engagementOf(nurse),
-        "Customer":fieldVal(d,FIELD.customer)||"", "B2B Partner":fieldVal(d,FIELD.b2bPartner)||"", "City":fieldVal(d,FIELD.city)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(nurse)||"", "Package":fieldVal(d,FIELD.pkg)||"", "Booking Type":fieldVal(d,FIELD.bookingType)||"", "Status":normStatus(d.status),
+        "Customer":fieldVal(d,FIELD.customer)||"", "B2B Partner":fieldVal(d,FIELD.b2bPartner)||"", "City":fieldVal(d,FIELD.city)||"", "Home Care":fieldVal(d,FIELD.homecare)||homeCareOf(nurse)||"", "Package":fieldVal(d,FIELD.pkg)||"", "Booking Type":fieldVal(d,FIELD.bookingType)||"", "Status":effStatus(d),
         "Updated At":d.statusUpdatedAt||"", "Order ID":b.id };
     });
   }
@@ -1167,7 +1198,7 @@
     const dk = datePicker.value; const keys = new Set(currentDayKeys());
     const bk = allBookings.filter(b => passNonStatus(b) && keys.has(bDateKey(b)) && passStatus(b));
     const counts = { Pending:0, Attended:0, Absent:0, "Sick Leave":0, "No Show":0 };
-    bk.forEach(b => counts[normStatus(b.data.status)]++);
+    bk.forEach(b => counts[effStatus(b.data)]++);
     const marked = counts.Attended+counts.Absent+counts["Sick Leave"]+counts["No Show"];
     const attRate = marked ? Math.round(counts.Attended/marked*100) : 0;
     const byNurse = {}; bk.forEach(b => { const n = fieldVal(b.data,FIELD.nurseName)||"Unassigned"; (byNurse[n]=byNurse[n]||[]).push(b); });
@@ -1176,7 +1207,7 @@
     let rows = "";
     Object.keys(byNurse).sort().forEach(n => {
       const items = byNurse[n]; const hours = Math.round(items.reduce((s,b)=>s+durationMin(b.data)/60,0)*10)/10;
-      const c = { Attended:0, Absent:0, "Sick Leave":0, "No Show":0, Pending:0 }; items.forEach(b => c[normStatus(b.data.status)]++);
+      const c = { Attended:0, Absent:0, "Sick Leave":0, "No Show":0, Pending:0 }; items.forEach(b => c[effStatus(b.data)]++);
       rows += `<tr class="border-t brd"><td class="py-1.5 pr-2 font-medium">${escapeHtml(n)} ${engBadge(n)}</td>
         <td class="py-1.5 px-2 text-center">${items.length}</td><td class="py-1.5 px-2 text-center">${hours}</td>
         <td class="py-1.5 px-2 text-center text-emerald-600">${c.Attended}</td><td class="py-1.5 px-2 text-center text-rose-600">${c.Absent}</td>
