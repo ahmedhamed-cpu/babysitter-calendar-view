@@ -858,8 +858,22 @@
     document.getElementById("order-count").textContent = dayBookings.length + (dayBookings.length===1?" order":" orders");
     document.getElementById("subtitle").textContent = fmtLong(dk);
 
-    if (dayBookings.length === 0) { empty.classList.remove("hidden"); return; }
+    if (dayBookings.length === 0) {
+      empty.classList.remove("hidden");
+      // Data loaded but nothing on THIS day → tell the user the real date span and offer a jump.
+      if (allBookings.length) {
+        const allKeys = allBookings.map(bDateKey).filter(Boolean).sort();
+        if (allKeys.length) {
+          const lo = allKeys[0], hi = allKeys[allKeys.length - 1];
+          showBanner(`Loaded <b>${allBookings.length}</b> bookings spanning <b>${lo}</b> → <b>${hi}</b>, but none on <b>${dk}</b>. <button id="jump-range" class="underline font-semibold">Show all in Range view</button>`, "warn");
+          const jb = document.getElementById("jump-range");
+          if (jb) jb.addEventListener("click", () => { rangeFrom.value = lo; rangeTo.value = hi; showBanner("", "hide"); setView("range"); });
+        }
+      }
+      return;
+    }
     empty.classList.add("hidden");
+    showBanner("", "hide");
 
     const enriched = dayBookings.map(b => { const start = parseSlotDateTime(b.data); const dur = durationMin(b.data); return start ? { b, start, dur, end:new Date(start.getTime()+dur*60000) } : null; }).filter(Boolean);
 
@@ -1343,10 +1357,6 @@
 
     // ----- bookings listener -----
     onSnapshot(collection(db, COLLECTION_NAME), { includeMetadataChanges: true }, (snapshot) => {
-      if (snapshot.size === 0 && !snapshot.metadata.fromCache)
-        showBanner(`Connected to <b>${firebaseConfig.projectId}</b> but the <b>${COLLECTION_NAME}</b> collection is empty.`, "warn");
-      else if (snapshot.size > 0) showBanner("", "hide");
-
       const seen = new Set(), out = [];
       snapshot.forEach(rec => {
         const data = rec.data();
@@ -1358,6 +1368,14 @@
       });
       allBookings = out;
       bookingById.clear(); out.forEach(b => bookingById.set(b.id, b));
+
+      // Banner: distinguish empty collection vs docs-present-but-all-filtered vs loaded OK.
+      if (snapshot.size === 0 && !snapshot.metadata.fromCache)
+        showBanner(`Connected to <b>${firebaseConfig.projectId}</b> but the <b>${COLLECTION_NAME}</b> collection is empty. The n8n sync hasn't written any documents yet.`, "warn");
+      else if (snapshot.size > 0 && out.length === 0)
+        showBanner(`Connected — <b>${snapshot.size}</b> documents exist in <b>${COLLECTION_NAME}</b>, but none have an assigned <b>Nurse Name</b>, so nothing can be placed on the calendar. Check that the n8n Firestore step's <b>Columns/Attributes</b> include <b>Nurse Name</b>.`, "warn");
+      else showBanner("", "hide");
+
       rebuildNameIndex();
       rebuildColors();
       renderGrid();
