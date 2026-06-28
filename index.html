@@ -1354,6 +1354,7 @@
   let appStarted = false;
   function startApp() {
     if (appStarted) return; appStarted = true;
+    console.log("[BS] dashboard build 2026-06-28-diag — startApp running, attaching Firestore listeners");
 
     // ----- bookings listener -----
     onSnapshot(collection(db, COLLECTION_NAME), { includeMetadataChanges: true }, (snapshot) => {
@@ -1368,6 +1369,12 @@
       });
       allBookings = out;
       bookingById.clear(); out.forEach(b => bookingById.set(b.id, b));
+
+      // --- diagnostics: report what Firestore actually returned ---
+      const _keys = out.map(bDateKey).filter(Boolean).sort();
+      const _span = _keys.length ? (_keys[0] + " → " + _keys[_keys.length - 1]) : "none";
+      console.log("[BS] snapshot", { rawDocs: snapshot.size, kept: out.length, fromCache: snapshot.metadata.fromCache, dateSpan: _span });
+      window.__bs = { rawDocs: snapshot.size, kept: out.length, fromCache: snapshot.metadata.fromCache, dateSpan: _span, today: todayStr() };
 
       // Banner: distinguish empty collection vs docs-present-but-all-filtered vs loaded OK.
       if (snapshot.size === 0 && !snapshot.metadata.fromCache)
