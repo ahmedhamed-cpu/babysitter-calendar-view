@@ -519,7 +519,7 @@
     return s !== "" && s !== "=" && s.toLowerCase() !== "null";
   }
   function effStatus(d) {
-    const s = effStatus(d);
+    const s = normStatus(d.status);
     if (s === "Pending" && hasAppLogin(d)) return "Attended";
     return s;
   }
