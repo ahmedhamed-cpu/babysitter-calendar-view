@@ -219,6 +219,7 @@
     <p class="text-sm muted mb-4" id="modal-customer-name">&mdash;</p>
     <div class="space-y-2 text-sm muted mb-4">
       <div class="flex justify-between gap-3"><span>Order ID</span><span class="font-mono text-xs muted2 truncate" id="modal-order-id">&mdash;</span></div>
+      <div class="flex justify-between"><span>Customer phone</span><a id="modal-customer-phone" class="text-right font-medium" style="color:var(--gold-dark)">&mdash;</a></div>
       <div class="flex justify-between"><span>Time</span><span id="modal-time">&mdash;</span></div>
       <div class="flex justify-between"><span>Duration</span><span id="modal-duration">&mdash;</span></div>
       <div class="flex justify-between"><span>Package</span><span id="modal-package" class="text-right">&mdash;</span></div>
@@ -240,10 +241,12 @@
       <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
     </div>
     <p class="viewer-only text-xs muted2 italic">View-only access — marking attendance and status is limited to admins.</p>
-    <div id="modal-locations" class="mt-4">
-      <a id="modal-client-loc" target="_blank" rel="noopener noreferrer" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127968; Client location &amp; ETA</a>
+    <div id="modal-locations" class="mt-4 grid grid-cols-2 gap-2">
+      <a id="modal-client-loc" target="_blank" rel="noopener noreferrer" class="hidden col-span-2 block text-center px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127968; Client location &amp; ETA</a>
+      <a id="modal-call-nurse" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128222; Call nurse</a>
+      <a id="modal-wa-nurse" target="_blank" rel="noopener noreferrer" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128172; WhatsApp nurse</a>
     </div>
-    <p id="modal-loc-none" class="hidden text-xs muted2 italic mt-3">No location link available for this booking.</p>
+    <p id="modal-loc-none" class="hidden text-xs muted2 italic mt-3">No location or contact links available for this booking.</p>
     <div id="modal-history" class="mt-4 hidden">
       <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-1">Recent changes</p>
       <div id="modal-history-list" class="text-xs muted space-y-0.5"></div>
@@ -289,6 +292,7 @@
     slotTime:    ["Booked Slot Time","BookedSlotTime","Booked_Slot_Time","Slot Time","slotTime","Booking Time","Appointment Time","appointmentTime","Time","time"],
     nurseName:   ["Nurse Name","NurseName","Nurse_Name","nurseName","Nurse","Babysitter","Assigned Nurse"],
     customer:    ["User_Name","User Name","UserName","customerName","Customer Name","Customer","Client","Patient Name"],
+    customerPhone: ["Phone Number","Phone","phone","Customer Phone","customerPhone","Mobile","mobile","Contact Number","Phone No","phone_no"],
     pkg:         ["Package Name","Package Type 2","Package","packageName","Service","Package Type"],
     homecare:    ["Home Care","HomeCare","Home_Care","Home Care Name","HomeCareName","homeCare","Agency","Partner","Home Care Partner","Provider","Vendor"],
     city:        ["City","city","Emirate","emirate","Area","area","Location","location","Region","region","Zone","zone"],
@@ -328,6 +332,80 @@
   const slug = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const rosterMap = {}; ROSTER.forEach(r => { rosterMap[slug(r.name)] = r; });
 
+  // Babysitter contact directory (baked in). Attached to each nurse via fuzzy
+  // identity (idKey), so spelling differences between this list and the booking
+  // names still resolve. Phone = tel: link, WhatsApp = wa.me link (digits only).
+  const NURSE_CONTACTS = [
+    { name:"Aga kendik mangelen", phone:"+966531289769", whatsapp:"+966531289769" },
+    { name:"Aiza", phone:"+966508305259", whatsapp:"+966508305259" },
+    { name:"Alaa mohamed", phone:"+966532593632", whatsapp:"+966532593632" },
+    { name:"Almalyn", phone:"+966544581073", whatsapp:"+966544581073" },
+    { name:"Aloha H Saldivar", phone:"+966502566941", whatsapp:"+966502566941" },
+    { name:"Anabel", phone:"+966575258393", whatsapp:"+966575258393" },
+    { name:"Angelita C. Valdez", phone:"+966565877408", whatsapp:"+966565877408" },
+    { name:"Arua Abdullah", phone:"+966532242483", whatsapp:"+966532242483" },
+    { name:"Asmaliya Dica Disoma", phone:"+966508071482", whatsapp:"+966508071482" },
+    { name:"Bai Alleha Manonsol", phone:"+966590370031", whatsapp:"+966590370031" },
+    { name:"Baico Tilar Dipolo", phone:"+966565137748", whatsapp:"+966565137748" },
+    { name:"Bayan abd elaziz", phone:"+966567792724", whatsapp:"+9667792724" },
+    { name:"Criselda Pando Peralta", phone:"+966563475283", whatsapp:"+966563475283" },
+    { name:"Dhyana Breeze Catalma", phone:"+966549658349", whatsapp:"+966549658349" },
+    { name:"Divina", phone:"+966575253442", whatsapp:"+966575253442" },
+    { name:"Elma", phone:"+966500914210", whatsapp:"+966500914210" },
+    { name:"Ema Aja Isnain", phone:"+966539240094", whatsapp:"+966539240094" },
+    { name:"Esmalia LARIOSA GELACIO", phone:"+966549128961", whatsapp:"+966549128961" },
+    { name:"Eva ngeline Aller a Ocampo", phone:"+966572514515", whatsapp:"+966572514515" },
+    { name:"Evangeline Pelosas", phone:"+966577419143", whatsapp:"+966577419143" },
+    { name:"Florevel Tigle Inicial", phone:"+966501074368", whatsapp:"+966501074368" },
+    { name:"Floriza Bihas Alviz", phone:"+966561779230", whatsapp:"+966561779230" },
+    { name:"Gillian", phone:"+966556529302", whatsapp:"+966556529302" },
+    { name:"Honey Lane B. Tamondong", phone:"+966506799815", whatsapp:"+966506799815" },
+    { name:"Jazmen A. Daliasen", phone:"+966545031383", whatsapp:"+966545031383" },
+    { name:"JE-ANN Z. PABELLANO", phone:"+966538814287", whatsapp:"+966538814287" },
+    { name:"Jean Montesilio", phone:"+966542814464", whatsapp:"+966542814464" },
+    { name:"Jennifer M. Royo", phone:"+966546094815", whatsapp:"+966546094815" },
+    { name:"Jocelyn Buang Aplasen", phone:"+966506661294", whatsapp:"+966506661294" },
+    { name:"Liezel Boncasin", phone:"+966575136070", whatsapp:"+966575136070" },
+    { name:"Lilibeth Nortes", phone:"+966575152700", whatsapp:"+966575152700" },
+    { name:"Loren a B. Abog", phone:"+966542813926", whatsapp:"+966542813926" },
+    { name:"Ma ry Ka ye", phone:"+966598606830", whatsapp:"+966598606830" },
+    { name:"Mahmoud fawzy", phone:"+966591690509", whatsapp:"+966591690509" },
+    { name:"Mahomud amin", phone:"+966509964983", whatsapp:"+966548093228" },
+    { name:"Marcelyn Matayao", phone:"+966509178432", whatsapp:"+966509178432" },
+    { name:"Margie", phone:"+966559209879", whatsapp:"+966559209879" },
+    { name:"Margie Billanon Gabaisen", phone:"+966541023796", whatsapp:"+966541023796" },
+    { name:"Maria Fe", phone:"+966575734278", whatsapp:"+966575734278" },
+    { name:"Mariam A Salik", phone:"+966572139872", whatsapp:"+966572139872" },
+    { name:"Maribel Jimenez", phone:"+966551465429", whatsapp:"+966551465429" },
+    { name:"Maricel alaman", phone:"+966546035581", whatsapp:"+966546035581" },
+    { name:"Maricel bulan", phone:"+966551077821", whatsapp:"+966551077821" },
+    { name:"Maricel Llanzana", phone:"+9665509447925", whatsapp:"+9665509447925" },
+    { name:"Mary Cris Cansica", phone:"+9660553749369", whatsapp:"+9660553749369" },
+    { name:"Mary Donna Manjares Valdez", phone:"+966533051454", whatsapp:"+966533051454" },
+    { name:"MaryAnn Demetrio", phone:"+966503223092", whatsapp:"+966503223092" },
+    { name:"Mona Akon Anong", phone:"+966535282285", whatsapp:"+966535282285" },
+    { name:"Mylene limgas Malan", phone:"+966557457963", whatsapp:"+966557457963" },
+    { name:"Nermeen Ahmed", phone:"+966507255405", whatsapp:"+966507255405" },
+    { name:"Noraida Mutia Madale", phone:"+966537850430", whatsapp:"+966537850430" },
+    { name:"Norfa", phone:"+966575147728", whatsapp:"+966575147728" },
+    { name:"Norfaisa Conel", phone:"+966545400927", whatsapp:"+966545400927" },
+    { name:"Racma Samad", phone:"+966547558708", whatsapp:"+966547558708" },
+    { name:"Rayjana Gubat Palman", phone:"+966572206654", whatsapp:"+966572206654" },
+    { name:"Rechelle Tarrobago Abina", phone:"+966533627748", whatsapp:"+966533627748" },
+    { name:"Ria Gutierez", phone:"+966537078638", whatsapp:"+966537078638" },
+    { name:"Rosalie L Cane", phone:"+966576756610", whatsapp:"+966576756610" },
+    { name:"Rosario Gajardo", phone:"+966542814292", whatsapp:"+966542814292" },
+    { name:"Rufa", phone:"+966534716313", whatsapp:"+966534716313" },
+    { name:"Saguira T Kanakan", phone:"+966598177409", whatsapp:"+966598177409" },
+    { name:"Salma awaad", phone:"+966541912248", whatsapp:"+966541912248" },
+    { name:"Salvacion Dumaya Blam", phone:"+966565286604", whatsapp:"+966565286604" },
+    { name:"Sharon Panganiban", phone:"+966504540098", whatsapp:"+966504540098" },
+    { name:"Sitti Nurisa", phone:"+966556588064", whatsapp:"+966556588064" },
+    { name:"Theresa A. Moscoso", phone:"+966553517410", whatsapp:"+966553517410" },
+    { name:"Veronica Fidalgo", phone:"+966546335874", whatsapp:"+966546335874" },
+    { name:"Warda Inog Zacaria", phone:"+9660570311068", whatsapp:"+9660570311068" },
+  ];
+
   // ---------- FUZZY NAME IDENTITY ----------
   // Minor spelling differences = same person. Different last name = different person.
   function editDistance(a, b) {
@@ -358,6 +436,7 @@
     ROSTER.forEach(r => raws.add(r.name));
     Object.values(babysitterDocs).forEach(d => { if (d.name) raws.add(d.name); });
     allBookings.forEach(b => { const n = fieldVal(b.data, FIELD.nurseName); if (n) raws.add(String(n)); });
+    NURSE_CONTACTS.forEach(c => raws.add(c.name));
     const names = [...raws]; const parent = {};
     const find = x => parent[x] === x ? x : (parent[x] = find(parent[x]));
     names.forEach(n => parent[n] = n);
@@ -371,7 +450,15 @@
       grp.forEach(n => nameKeyMap.set(normName(n), key));
       nameDisplay.set(key, canon);
     });
+    // Attach phone/WhatsApp to each identity (after clustering, so spelling variants share a key)
+    nurseContactByKey = {};
+    NURSE_CONTACTS.forEach(c => { const k = idKey(c.name); if (!nurseContactByKey[k]) nurseContactByKey[k] = { phone: c.phone, whatsapp: c.whatsapp }; });
   }
+  let nurseContactByKey = {};
+  // tel: keep a leading + and digits only. wa.me: digits only, no +.
+  const telLink = raw => { const d = String(raw||"").replace(/[^\d+]/g, ""); return d ? ("tel:" + (d[0]==="+"?d:"+"+d.replace(/^\+/,""))) : ""; };
+  const waLink  = raw => { const d = String(raw||"").replace(/\D/g, ""); return d ? ("https://wa.me/" + d) : ""; };
+  const nurseContact = name => nurseContactByKey[idKey(name)] || null;
   const idKey = name => nameKeyMap.get(normName(name)) || slug(name);
   const displayName = name => nameDisplay.get(idKey(name)) || name;
 
@@ -1082,6 +1169,10 @@
     document.getElementById("modal-nurse-name").textContent = displayName(fieldVal(d, FIELD.nurseName) || "Unassigned");
     document.getElementById("modal-customer-name").textContent = fieldVal(d, FIELD.customer) || "Unknown customer";
     document.getElementById("modal-order-id").textContent = booking.id;
+    // Customer phone (tap to call)
+    { const cp = fieldVal(d, FIELD.customerPhone); const el = document.getElementById("modal-customer-phone");
+      const link = telLink(cp);
+      if (link) { el.textContent = String(cp).trim(); el.href = link; } else { el.textContent = "—"; el.removeAttribute("href"); } }
     const dt = parseSlotDateTime(d); const dur = durationMin(d);
     document.getElementById("modal-time").textContent = dt ? (fmtTime(dt)+"–"+fmtTime(new Date(dt.getTime()+dur*60000))) : "—";
     document.getElementById("modal-duration").textContent = fmtHours(dur);
@@ -1100,12 +1191,19 @@
     if (hist.length) { box.classList.remove("hidden"); list.innerHTML = hist.map(h => `<div>• ${escapeHtml(h.status)}${h.source?` <span class="muted2">(${escapeHtml(srcLabel(h.source))})</span>`:""} <span class="muted2">— ${h.at?fmtStamp(h.at):""}</span></div>`).join(""); }
     else box.classList.add("hidden");
 
-    // Client location link (from Map URL) for ETA checks
+    // Client location link (from Map URL) + nurse call/WhatsApp (from contact directory)
     const isUrl = u => u && /^https?:\/\//i.test(String(u).trim());
     const setLoc = (el, raw) => { if (isUrl(raw)) { el.href = String(raw).trim(); el.classList.remove("hidden"); } else { el.classList.add("hidden"); el.removeAttribute("href"); } };
     const cLoc = fieldVal(d, FIELD.clientLocation);
     setLoc(document.getElementById("modal-client-loc"), cLoc);
-    document.getElementById("modal-loc-none").classList.toggle("hidden", isUrl(cLoc));
+
+    const contact = nurseContact(fieldVal(d, FIELD.nurseName) || "");
+    const callEl = document.getElementById("modal-call-nurse"), waEl = document.getElementById("modal-wa-nurse");
+    const tel = contact ? telLink(contact.phone) : "", wa = contact ? waLink(contact.whatsapp) : "";
+    if (tel) { callEl.href = tel; callEl.classList.remove("hidden"); } else { callEl.classList.add("hidden"); callEl.removeAttribute("href"); }
+    if (wa) { waEl.href = wa; waEl.classList.remove("hidden"); } else { waEl.classList.add("hidden"); waEl.removeAttribute("href"); }
+
+    document.getElementById("modal-loc-none").classList.toggle("hidden", isUrl(cLoc) || !!tel || !!wa);
 
     modal.classList.remove("hidden");
   }
