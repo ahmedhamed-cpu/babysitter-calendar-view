@@ -77,6 +77,8 @@
   select option { color:#1A2238; background:#FFFFFF; }
   body.dark select option { color:#e9e5d8; background:#171d2b; }
   body.dark select { color:var(--text); }
+  @keyframes bs-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  #sync-btn:disabled { opacity: .7; cursor: not-allowed; }
   @media print {
     body * { visibility:hidden; }
     #summary-content, #summary-content * { visibility:visible; }
@@ -123,6 +125,10 @@
         <button id="today-btn" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium">Today</button>
         <div id="order-count" class="h-9 px-3 rounded-lg flex items-center text-sm font-semibold" style="background:var(--gold-soft); border:1px solid var(--gold-soft-bd)">0 orders</div>
         <button id="theme-toggle" title="Toggle dark / light" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center text-base">🌙</button>
+        <button id="sync-btn" title="Trigger a fresh sync from Metabase" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium flex items-center gap-1.5">
+          <span id="sync-icon">↻</span><span id="sync-label">Sync</span>
+        </button>
+        <div id="sync-stamp" title="When the latest sync run wrote data" class="hidden h-9 px-2 rounded-lg items-center text-xs muted2 font-medium" style="background:var(--surface);border:1px solid var(--border-2)"></div>
         <button id="signout-btn" title="Sign out" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium hidden">Sign out</button>
       </div>
     </div>
@@ -278,6 +284,16 @@
   const auth = getAuth(app);
 
   const COLLECTION_NAME = "bookings";
+  // n8n webhooks — the "Sync now" button POSTs to both in parallel so the upsert
+  // (fresh attendance / new bookings) and delete (recently-cancelled cleanup) run
+  // together on demand. The hourly schedules on both workflows remain as a safety
+  // net; the button just accelerates freshness when ops needs it right now.
+  const SYNC_WEBHOOKS = {
+    upsert: "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-upsert",
+    del:    "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-delete"
+  };
+  // Button is debounced for this many ms after a click, so nobody hammers it.
+  const SYNC_COOLDOWN_MS = 45000;
   const AMBIGUOUS_DATE_ORDER = "DMY"; // DD/MM/YYYY default (set "MDY" if month-first)
   let GRID_START_HOUR = 8, GRID_END_HOUR = 22;
   const PIXELS_PER_HOUR = 90;
@@ -518,6 +534,21 @@
       let a=+m[1], b=+m[2], y=+m[3]; if (y<100) y+=2000; let day, mo;
       if (a>12) { day=a; mo=b; } else if (b>12) { day=b; mo=a; } else { if (AMBIGUOUS_DATE_ORDER==="MDY"){mo=a;day=b;} else {day=a;mo=b;} }
       return { y, mo:mo-1, d:day, h:m[4]!=null?+m[4]:0, mi:m[5]!=null?+m[5]:0, hasTime:m[4]!=null };
+    }
+    // Wordy formats: "21 June, 2026" / "21 June 2026" / "June 21, 2026" (with optional time)
+    const MONTHS = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+    const monIdx = w => { const k = w.toLowerCase().slice(0,3); return k in MONTHS ? MONTHS[k] : null; };
+    let mw = s.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})(?:[ T,]+(\d{1,2}):(\d{2})\s*(am|pm)?)?/i); // 21 June, 2026
+    if (mw && monIdx(mw[2]) != null) {
+      let h = mw[4]!=null?+mw[4]:0; const ap = mw[6]&&mw[6].toLowerCase();
+      if (ap==="pm"&&h<12) h+=12; if (ap==="am"&&h===12) h=0;
+      return { y:+mw[3], mo:monIdx(mw[2]), d:+mw[1], h, mi:mw[5]!=null?+mw[5]:0, hasTime:mw[4]!=null };
+    }
+    mw = s.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})(?:[ T,]+(\d{1,2}):(\d{2})\s*(am|pm)?)?/i); // June 21, 2026
+    if (mw && monIdx(mw[1]) != null) {
+      let h = mw[4]!=null?+mw[4]:0; const ap = mw[6]&&mw[6].toLowerCase();
+      if (ap==="pm"&&h<12) h+=12; if (ap==="am"&&h===12) h=0;
+      return { y:+mw[3], mo:monIdx(mw[1]), d:+mw[2], h, mi:mw[5]!=null?+mw[5]:0, hasTime:mw[4]!=null };
     }
     const dt = new Date(s); if (!isNaN(dt)) return { ...riyadhParts(dt), hasTime:/\d{1,2}:\d{2}/.test(s) };
     return null;
@@ -1269,11 +1300,69 @@
   document.getElementById("exp-summary").addEventListener("click", () => { closeMenus(); openSummary(); });
   document.getElementById("summary-modal").addEventListener("click", e => { if (e.target.id === "summary-modal") closeSummary(); });
 
+  // ---------- SYNC BUTTON + LAST-SYNCED STAMP ----------
+  // Button POSTs to both n8n webhooks in parallel; each workflow's incremental
+  // filter keeps writes tiny regardless of click frequency. n8n replies immediately
+  // (responseMode=onReceived) so the button feels snappy; the actual sync then runs
+  // in the background and — when it writes to Firestore — Firestore's onSnapshot
+  // pushes fresh data + a bumped syncRun into the dashboard automatically, which is
+  // when the "Last synced" pill updates. That end-to-end feedback is what proves it worked.
+  let lastSyncRunMs = 0;
+  function fmtRelative(ms) {
+    if (!ms) return "";
+    const now = Date.now(), diff = Math.max(0, now - ms);
+    const s = Math.floor(diff/1000);
+    if (s < 45) return "just now";
+    const m = Math.floor(s/60); if (m < 60) return m + "m ago";
+    const h = Math.floor(m/60); if (h < 24) return h + "h ago";
+    const d = Math.floor(h/24); return d + "d ago";
+  }
+  function updateSyncStamp(newestMs) {
+    if (newestMs && newestMs > lastSyncRunMs) lastSyncRunMs = newestMs;
+    const el = document.getElementById("sync-stamp"); if (!el) return;
+    if (!lastSyncRunMs) { el.classList.add("hidden"); el.classList.remove("flex"); return; }
+    el.classList.remove("hidden"); el.classList.add("flex");
+    const abs = new Date(lastSyncRunMs).toLocaleTimeString("en-US",
+      { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
+    el.textContent = "Synced " + fmtRelative(lastSyncRunMs) + " · " + abs;
+    el.title = "Last successful n8n write at " + new Date(lastSyncRunMs).toLocaleString("en-US", { timeZone: "Asia/Riyadh" });
+  }
+  // Refresh the relative time every 30s so "just now" doesn't stay stuck.
+  setInterval(() => updateSyncStamp(0), 30000);
+
+  let syncCooldownUntil = 0;
+  async function triggerSync() {
+    if (Date.now() < syncCooldownUntil) return;
+    const btn = document.getElementById("sync-btn");
+    const icon = document.getElementById("sync-icon");
+    const label = document.getElementById("sync-label");
+    btn.disabled = true; syncCooldownUntil = Date.now() + SYNC_COOLDOWN_MS;
+    icon.style.animation = "bs-spin 1s linear infinite";
+    icon.style.display = "inline-block";
+    label.textContent = "Syncing…";
+    // Fire both webhooks; don't block on either — n8n responds immediately anyway.
+    // Use no-cors to avoid CORS preflight issues on the n8n cloud endpoint; we
+    // don't need to read the response, we just need to trigger the workflows.
+    const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => console.warn("sync webhook:", url, err));
+    let ok = true;
+    try { await Promise.all([kick(SYNC_WEBHOOKS.upsert), kick(SYNC_WEBHOOKS.del)]); }
+    catch (e) { ok = false; console.error("sync trigger failed:", e); }
+    label.textContent = ok ? "Requested…" : "Sync failed";
+    // Restore button state after cooldown. The stamp will bump on its own when
+    // Firestore's onSnapshot receives the fresh syncRun.
+    setTimeout(() => {
+      btn.disabled = false;
+      icon.style.animation = "";
+      label.textContent = "Sync";
+    }, SYNC_COOLDOWN_MS);
+  }
+
   // ---------- THEME ----------
   function applyTheme(t) { document.body.classList.toggle("dark", t==="dark"); document.getElementById("theme-toggle").textContent = t==="dark"?"☀":"🌙"; try { localStorage.setItem("bs-theme", t); } catch(e){} }
   let theme = "light"; try { theme = localStorage.getItem("bs-theme") || "light"; } catch(e){}
   applyTheme(theme);
   document.getElementById("theme-toggle").addEventListener("click", () => { theme = document.body.classList.contains("dark") ? "light" : "dark"; applyTheme(theme); });
+  document.getElementById("sync-btn").addEventListener("click", triggerSync);
 
   // ---------- EXPORT ----------
   function rowsFor(bookings) {
@@ -1354,7 +1443,6 @@
   let appStarted = false;
   function startApp() {
     if (appStarted) return; appStarted = true;
-    console.log("[BS] dashboard build 2026-06-28-diag — startApp running, attaching Firestore listeners");
 
     // ----- bookings listener -----
     onSnapshot(collection(db, COLLECTION_NAME), { includeMetadataChanges: true }, (snapshot) => {
@@ -1370,17 +1458,17 @@
       allBookings = out;
       bookingById.clear(); out.forEach(b => bookingById.set(b.id, b));
 
-      // --- diagnostics: report what Firestore actually returned ---
-      const _keys = out.map(bDateKey).filter(Boolean).sort();
-      const _span = _keys.length ? (_keys[0] + " → " + _keys[_keys.length - 1]) : "none";
-      console.log("[BS] snapshot", { rawDocs: snapshot.size, kept: out.length, fromCache: snapshot.metadata.fromCache, dateSpan: _span });
-      window.__bs = { rawDocs: snapshot.size, kept: out.length, fromCache: snapshot.metadata.fromCache, dateSpan: _span, today: todayStr() };
+      // Track newest syncRun (ms) across all docs → "Last synced" pill.
+      // This is more honest than "when button was clicked" because it reflects
+      // when n8n actually finished writing to Firestore.
+      let newest = 0;
+      out.forEach(b => { const s = +b.data.syncRun || 0; if (s > newest) newest = s; });
+      updateSyncStamp(newest);
 
-      // Banner: distinguish empty collection vs docs-present-but-all-filtered vs loaded OK.
       if (snapshot.size === 0 && !snapshot.metadata.fromCache)
-        showBanner(`Connected to <b>${firebaseConfig.projectId}</b> but the <b>${COLLECTION_NAME}</b> collection is empty. The n8n sync hasn't written any documents yet.`, "warn");
+        showBanner(`Connected to <b>${firebaseConfig.projectId}</b> but the <b>${COLLECTION_NAME}</b> collection is empty.`, "warn");
       else if (snapshot.size > 0 && out.length === 0)
-        showBanner(`Connected — <b>${snapshot.size}</b> documents exist in <b>${COLLECTION_NAME}</b>, but none have an assigned <b>Nurse Name</b>, so nothing can be placed on the calendar. Check that the n8n Firestore step's <b>Columns/Attributes</b> include <b>Nurse Name</b>.`, "warn");
+        showBanner(`Connected — <b>${snapshot.size}</b> documents exist in <b>${COLLECTION_NAME}</b>, but none have an assigned <b>Nurse Name</b>.`, "warn");
       else showBanner("", "hide");
 
       rebuildNameIndex();
@@ -1411,7 +1499,7 @@
   // Admins can mark attendance/status and edit profiles. Everyone else is view-only
   // (can browse all views and export, but cannot write). Enforced for real by the
   // Firestore security rules; this just shapes the UI.
-  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com", "nilesh.pandya@feelvaleo.com"];
+  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com"];
   let isAdmin = false;
 
   const loginOverlay = document.getElementById("login-overlay");
