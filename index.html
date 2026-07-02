@@ -77,8 +77,44 @@
   select option { color:#1A2238; background:#FFFFFF; }
   body.dark select option { color:#e9e5d8; background:#171d2b; }
   body.dark select { color:var(--text); }
+
+  /* ---- Sync control: button + signal light + timestamp underneath ---- */
   @keyframes bs-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-  #sync-btn:disabled { opacity: .7; cursor: not-allowed; }
+  @keyframes bs-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(52,199,89,.55); }
+    70%  { box-shadow: 0 0 0 6px rgba(52,199,89,0); }
+    100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); }
+  }
+  .sync-btn {
+    position: relative; display: flex; align-items: center; gap: 8px;
+    height: 40px; padding: 0 16px 0 13px; border-radius: 11px;
+    font-size: 14px; font-weight: 700; letter-spacing: .1px; cursor: pointer;
+    color: #0d3a5e; border: none; white-space: nowrap;
+    background: linear-gradient(135deg, #FFD680 0%, #F5B82E 55%, #E9A712 100%);
+    box-shadow: 0 2px 5px rgba(233,167,18,.35), inset 0 1px 0 rgba(255,255,255,.5);
+    transition: transform .12s ease, box-shadow .2s ease, filter .2s ease;
+  }
+  .sync-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(233,167,18,.45), inset 0 1px 0 rgba(255,255,255,.5); }
+  .sync-btn:active { transform: translateY(0); }
+  .sync-btn:disabled { cursor: not-allowed; filter: saturate(.6) brightness(.97); transform: none; }
+  body.dark .sync-btn { color: #1a1205; }
+  .sync-icon { font-size: 16px; line-height: 1; display: inline-block; }
+  .sync-label { line-height: 1; }
+  /* signal light */
+  .sync-dot {
+    width: 9px; height: 9px; border-radius: 50%; flex: none;
+    background: #34c759; box-shadow: 0 0 0 0 rgba(52,199,89,.55);
+    animation: bs-pulse 2.4s infinite;
+  }
+  .sync-dot.stale   { background:#ff9f0a; animation: bs-pulse 2.4s infinite; box-shadow:0 0 0 0 rgba(255,159,10,.55); }
+  .sync-dot.syncing { background:#0a84ff; animation: bs-pulse 1s infinite;   box-shadow:0 0 0 0 rgba(10,132,255,.55); }
+  .sync-dot.error   { background:#ff453a; animation: none; }
+  /* timestamp under the button */
+  .sync-stamp {
+    margin-top: 4px; font-size: 10.5px; font-weight: 600; line-height: 1.2;
+    color: var(--muted-2, #7d8aa0); text-align: center; letter-spacing: .1px;
+    max-width: 150px;
+  }
   @media print {
     body * { visibility:hidden; }
     #summary-content, #summary-content * { visibility:visible; }
@@ -119,16 +155,20 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <div class="flex flex-col items-stretch mr-1">
+          <button id="sync-btn" title="Trigger a fresh sync from Metabase now" class="sync-btn group">
+            <span id="sync-dot" class="sync-dot"></span>
+            <span id="sync-icon" class="sync-icon">↻</span>
+            <span id="sync-label" class="sync-label">Sync now</span>
+          </button>
+          <span id="sync-stamp" class="sync-stamp">Waiting for first sync…</span>
+        </div>
         <button id="prev-day" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center font-medium">&#8249;</button>
         <input type="date" id="date-picker" class="icon-input h-9 px-3 rounded-lg border brd text-sm font-medium" />
         <button id="next-day" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center font-medium">&#8250;</button>
         <button id="today-btn" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium">Today</button>
         <div id="order-count" class="h-9 px-3 rounded-lg flex items-center text-sm font-semibold" style="background:var(--gold-soft); border:1px solid var(--gold-soft-bd)">0 orders</div>
         <button id="theme-toggle" title="Toggle dark / light" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center text-base">🌙</button>
-        <button id="sync-btn" title="Trigger a fresh sync from Metabase" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium flex items-center gap-1.5">
-          <span id="sync-icon">↻</span><span id="sync-label">Sync</span>
-        </button>
-        <div id="sync-stamp" title="When the latest sync run wrote data" class="hidden h-9 px-2 rounded-lg items-center text-xs muted2 font-medium" style="background:var(--surface);border:1px solid var(--border-2)"></div>
         <button id="signout-btn" title="Sign out" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium hidden">Sign out</button>
       </div>
     </div>
@@ -1310,24 +1350,36 @@
   let lastSyncRunMs = 0;
   function fmtRelative(ms) {
     if (!ms) return "";
-    const now = Date.now(), diff = Math.max(0, now - ms);
+    const diff = Math.max(0, Date.now() - ms);
     const s = Math.floor(diff/1000);
     if (s < 45) return "just now";
-    const m = Math.floor(s/60); if (m < 60) return m + "m ago";
+    const m = Math.floor(s/60); if (m < 60) return m + " min ago";
     const h = Math.floor(m/60); if (h < 24) return h + "h ago";
     const d = Math.floor(h/24); return d + "d ago";
+  }
+  function setSyncDot(state) {
+    const dot = document.getElementById("sync-dot"); if (!dot) return;
+    dot.classList.remove("stale","syncing","error");
+    if (state) dot.classList.add(state);   // "" = fresh (green default)
   }
   function updateSyncStamp(newestMs) {
     if (newestMs && newestMs > lastSyncRunMs) lastSyncRunMs = newestMs;
     const el = document.getElementById("sync-stamp"); if (!el) return;
-    if (!lastSyncRunMs) { el.classList.add("hidden"); el.classList.remove("flex"); return; }
-    el.classList.remove("hidden"); el.classList.add("flex");
-    const abs = new Date(lastSyncRunMs).toLocaleTimeString("en-US",
-      { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
-    el.textContent = "Synced " + fmtRelative(lastSyncRunMs) + " · " + abs;
-    el.title = "Last successful n8n write at " + new Date(lastSyncRunMs).toLocaleString("en-US", { timeZone: "Asia/Riyadh" });
+    if (!lastSyncRunMs) { el.textContent = "Waiting for first sync…"; setSyncDot("stale"); return; }
+    const d = new Date(lastSyncRunMs);
+    const date = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "Asia/Riyadh" });
+    const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
+    el.innerHTML = "Last sync: " + date + ", " + time + "<br>" + fmtRelative(lastSyncRunMs);
+    el.title = "Latest n8n write to Firestore: " + d.toLocaleString("en-US", { timeZone: "Asia/Riyadh" });
+    // Signal light: green if fresh (<90 min), amber if going stale. The syncing/error
+    // states are set transiently by triggerSync and take priority while active.
+    const dot = document.getElementById("sync-dot");
+    if (dot && !dot.classList.contains("syncing") && !dot.classList.contains("error")) {
+      const ageMin = (Date.now() - lastSyncRunMs) / 60000;
+      setSyncDot(ageMin > 90 ? "stale" : "");
+    }
   }
-  // Refresh the relative time every 30s so "just now" doesn't stay stuck.
+  // Refresh the relative time + freshness light every 30s.
   setInterval(() => updateSyncStamp(0), 30000);
 
   let syncCooldownUntil = 0;
@@ -1338,22 +1390,24 @@
     const label = document.getElementById("sync-label");
     btn.disabled = true; syncCooldownUntil = Date.now() + SYNC_COOLDOWN_MS;
     icon.style.animation = "bs-spin 1s linear infinite";
-    icon.style.display = "inline-block";
     label.textContent = "Syncing…";
-    // Fire both webhooks; don't block on either — n8n responds immediately anyway.
-    // Use no-cors to avoid CORS preflight issues on the n8n cloud endpoint; we
-    // don't need to read the response, we just need to trigger the workflows.
-    const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => console.warn("sync webhook:", url, err));
+    setSyncDot("syncing");
+    // Fire both webhooks in parallel. no-cors avoids CORS preflight on n8n cloud;
+    // we don't read the response — proof of success is syncRun bumping in Firestore.
+    const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => { console.warn("sync webhook:", url, err); throw err; });
     let ok = true;
     try { await Promise.all([kick(SYNC_WEBHOOKS.upsert), kick(SYNC_WEBHOOKS.del)]); }
     catch (e) { ok = false; console.error("sync trigger failed:", e); }
-    label.textContent = ok ? "Requested…" : "Sync failed";
-    // Restore button state after cooldown. The stamp will bump on its own when
-    // Firestore's onSnapshot receives the fresh syncRun.
+    label.textContent = ok ? "Requested…" : "Failed";
+    if (!ok) setSyncDot("error");
     setTimeout(() => {
       btn.disabled = false;
       icon.style.animation = "";
-      label.textContent = "Sync";
+      label.textContent = "Sync now";
+      // Clear transient states; updateSyncStamp will restore green/amber by freshness.
+      const dot = document.getElementById("sync-dot");
+      if (dot) dot.classList.remove("syncing","error");
+      updateSyncStamp(0);
     }, SYNC_COOLDOWN_MS);
   }
 
