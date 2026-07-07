@@ -235,6 +235,7 @@
       <summary class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium cursor-pointer flex items-center gap-1">Export &#9662;</summary>
       <div class="absolute z-30 mt-1 right-0 card rounded-lg p-1 w-56">
         <button id="exp-view" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export current view (CSV)</button>
+        <button id="exp-exceptions" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export exceptions for invoicing (CSV)</button>
         <button id="exp-summary" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">End-of-day summary</button>
       </div>
     </details>
@@ -703,12 +704,27 @@
     const s = String(v).trim();
     return s !== "" && s !== "=" && s.toLowerCase() !== "null";
   }
+  // Order lifecycle status from the source (Metabase), distinct from our own `status`.
+  // A COMPLETED order means the visit happened → treat as Attended even if the
+  // "Nurse Started At" login timestamp didn't sync.
+  function orderAttended(d) {
+    const v = fieldVal(d, FIELD.orderStatus);
+    if (v == null) return false;
+    return /complete/i.test(String(v));
+  }
   function effStatus(d) {
     const s = normStatus(d.status);
-    if (s === "Pending" && hasAppLogin(d)) return "Attended";
+    // An admin-set status (marked in this dashboard) is authoritative and must never
+    // be overridden by a sync-derived attendance signal — this protects Sick Leave /
+    // No Show / Absent records for invoicing.
+    if (d.statusSource === "dashboard" && KNOWN_STATUSES.has(s)) return s;
+    if (s === "Pending" && (hasAppLogin(d) || orderAttended(d))) return "Attended";
     return s;
   }
-  const isAutoAttended = d => d.attendanceSource === "app-login" || (normStatus(d.status) === "Pending" && hasAppLogin(d));
+  const isAutoAttended = d => {
+    if (d.statusSource === "dashboard") return false;   // admin-set, not auto
+    return d.attendanceSource === "app-login" || (normStatus(d.status) === "Pending" && (hasAppLogin(d) || orderAttended(d)));
+  };
 
   const datePicker = document.getElementById("date-picker");
   const rangeFrom = document.getElementById("range-from");
@@ -1330,8 +1346,9 @@
     try {
       await updateDoc(doc(db, COLLECTION_NAME, activeModalDocId), {
         status: newStatus,
+        statusSource: "dashboard",
         statusUpdatedAt: at,
-        statusHistory: arrayUnion({ status: newStatus, at, source: "dashboard" })
+        statusHistory: arrayUnion({ status: newStatus, at, source: "dashboard", by: currentUserEmail })
       });
       closeModal();
     } catch (err) {
@@ -1364,6 +1381,7 @@
 
   function closeMenus() { document.querySelectorAll("details").forEach(d => d.removeAttribute("open")); }
   document.getElementById("exp-view").addEventListener("click", () => { closeMenus(); exportViewCSV(); });
+  document.getElementById("exp-exceptions").addEventListener("click", () => { closeMenus(); exportExceptionsCSV(); });
   document.getElementById("exp-summary").addEventListener("click", () => { closeMenus(); openSummary(); });
   document.getElementById("summary-modal").addEventListener("click", e => { if (e.target.id === "summary-modal") closeSummary(); });
 
@@ -1475,6 +1493,39 @@
     downloadFile("bookings_"+tag+".csv", toCSV(rowsFor(bk)));
   }
 
+  // Exceptions / invoicing export: every Sick Leave / No Show / Absent in the current
+  // date scope, with who marked it and when — the ledger finance needs for billing.
+  const EXCEPTION_STATUSES = new Set(["Sick Leave", "No Show", "Absent"]);
+  function exportExceptionsCSV() {
+    const scope = scopeNonStatus()
+      .filter(b => EXCEPTION_STATUSES.has(effStatus(b.data)))
+      .sort((a,b) => (parseSlotDateTime(a.data)||0) - (parseSlotDateTime(b.data)||0));
+    if (!scope.length) { alert("No Sick Leave / No Show / Absent records in the current date range.\n\nTip: switch to Range view and widen the dates to cover the invoicing period."); return; }
+    const rows = scope.map(b => {
+      const d = b.data, start = parseSlotDateTime(d), dur = durationMin(d);
+      const nurse = fieldVal(d, FIELD.nurseName) || "";
+      // Pull the last dashboard-marked history entry for who/when.
+      const hist = Array.isArray(d.statusHistory) ? d.statusHistory : [];
+      const last = [...hist].reverse().find(h => h && EXCEPTION_STATUSES.has(h.status)) || {};
+      return {
+        "Date": start ? dateKey(start) : "",
+        "Slot Time": fieldVal(d, FIELD.slotTime) || "",
+        "Hours": Math.round(dur/60*100)/100,
+        "Nurse": nurse ? displayName(nurse) : "",
+        "Status": effStatus(d),
+        "Home Care / Agency": fieldVal(d, FIELD.homecare) || homeCareOf(nurse) || "",
+        "B2B Partner": fieldVal(d, FIELD.b2bPartner) || "",
+        "City": fieldVal(d, FIELD.city) || "",
+        "Package": fieldVal(d, FIELD.pkg) || "",
+        "Marked By": last.by || "",
+        "Marked At": last.at ? fmtStamp(last.at) : (d.statusUpdatedAt ? fmtStamp(d.statusUpdatedAt) : ""),
+        "Order ID": b.id
+      };
+    });
+    const tag = viewMode === "day" ? datePicker.value : (viewMode === "week" ? "week_"+currentDayKeys()[0] : rangeFrom.value+"_to_"+rangeTo.value);
+    downloadFile("exceptions_"+tag+".csv", toCSV(rows));
+  }
+
   // ---------- SUMMARY ----------
   function openSummary() {
     const dk = datePicker.value; const keys = new Set(currentDayKeys());
@@ -1582,6 +1633,7 @@
   // Firestore security rules; this just shapes the UI.
   const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com"];
   let isAdmin = false;
+  let currentUserEmail = "";
 
   const loginOverlay = document.getElementById("login-overlay");
   const loginError = document.getElementById("login-error");
@@ -1638,6 +1690,7 @@
   onAuthStateChanged(auth, (user) => {
     if (user) {
       isAdmin = ADMIN_EMAILS.includes((user.email || "").toLowerCase());
+      currentUserEmail = user.email || "";
       document.body.classList.toggle("viewer", !isAdmin);
       loginOverlay.classList.add("hidden");
       const so = document.getElementById("signout-btn");
