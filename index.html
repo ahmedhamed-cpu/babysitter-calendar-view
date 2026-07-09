@@ -713,16 +713,17 @@
     return /complete/i.test(String(v));
   }
   function effStatus(d) {
+    // Admin-set status lives in `adminStatus` — a field the n8n sync NEVER writes,
+    // so it survives every sync and is the top-priority truth.
+    if (d.adminStatus != null && d.adminStatus !== "") return normStatus(d.adminStatus);
+    // Legacy admin marks (before adminStatus existed) used statusSource==="dashboard".
+    if (d.statusSource === "dashboard" && d.status) return normStatus(d.status);
     const s = normStatus(d.status);
-    // An admin-set status (marked in this dashboard) is authoritative and must never
-    // be overridden by a sync-derived attendance signal — this protects Sick Leave /
-    // No Show / Absent records for invoicing.
-    if (d.statusSource === "dashboard" && KNOWN_STATUSES.has(s)) return s;
     if (s === "Pending" && (hasAppLogin(d) || orderAttended(d))) return "Attended";
     return s;
   }
   const isAutoAttended = d => {
-    if (d.statusSource === "dashboard") return false;   // admin-set, not auto
+    if ((d.adminStatus != null && d.adminStatus !== "") || d.statusSource === "dashboard") return false;  // admin-set, not auto
     return d.attendanceSource === "app-login" || (normStatus(d.status) === "Pending" && (hasAppLogin(d) || orderAttended(d)));
   };
 
@@ -1312,7 +1313,7 @@
       document.getElementById("modal-btype").textContent = raw ? (String(raw) + " · tagged " + tagged) : ("tagged " + tagged); }
     const srcLabel = s => s === "app-login" ? "auto · app login" : (s === "dashboard" ? "dashboard" : (s || ""));
     document.getElementById("modal-current-status").textContent = (effStatus(d)) + (d.attendanceSource ? "  ·  " + srcLabel(d.attendanceSource) : "");
-    document.getElementById("modal-updated").textContent = d.statusUpdatedAt ? fmtStamp(d.statusUpdatedAt) : "—";
+    document.getElementById("modal-updated").textContent = (d.adminStatusAt || d.statusUpdatedAt) ? fmtStamp(d.adminStatusAt || d.statusUpdatedAt) : "—";
 
     const hist = Array.isArray(d.statusHistory) ? d.statusHistory.slice(-3).reverse() : [];
     const box = document.getElementById("modal-history"), list = document.getElementById("modal-history-list");
@@ -1345,15 +1346,15 @@
     const at = new Date().toISOString();
     try {
       await updateDoc(doc(db, COLLECTION_NAME, activeModalDocId), {
-        status: newStatus,
-        statusSource: "dashboard",
-        statusUpdatedAt: at,
+        adminStatus: newStatus,
+        adminStatusAt: at,
+        adminStatusBy: currentUserEmail,
         statusHistory: arrayUnion({ status: newStatus, at, source: "dashboard", by: currentUserEmail })
       });
       closeModal();
     } catch (err) {
       console.error("Failed to update status:", err);
-      alert("Could not save the status change.\n\nIf this says 'permission-denied', your Firestore rules need to allow the status / statusUpdatedAt / statusHistory fields — see the rules I provided.");
+      alert("Could not save the status change.\n\nIf this says 'permission-denied', your Firestore rules must allow the adminStatus / adminStatusAt / adminStatusBy / statusHistory fields — publish the updated rules.");
     }
   }));
 
@@ -1517,8 +1518,8 @@
         "B2B Partner": fieldVal(d, FIELD.b2bPartner) || "",
         "City": fieldVal(d, FIELD.city) || "",
         "Package": fieldVal(d, FIELD.pkg) || "",
-        "Marked By": last.by || "",
-        "Marked At": last.at ? fmtStamp(last.at) : (d.statusUpdatedAt ? fmtStamp(d.statusUpdatedAt) : ""),
+        "Marked By": d.adminStatusBy || last.by || "",
+        "Marked At": d.adminStatusAt ? fmtStamp(d.adminStatusAt) : (last.at ? fmtStamp(last.at) : (d.statusUpdatedAt ? fmtStamp(d.statusUpdatedAt) : "")),
         "Order ID": b.id
       };
     });
@@ -1589,6 +1590,20 @@
       });
       allBookings = out;
       bookingById.clear(); out.forEach(b => bookingById.set(b.id, b));
+
+      // Debug helper: run window.findNurse("kaye") in the console to see whether a
+      // nurse's bookings loaded, what date they parsed to, and their status.
+      window.findNurse = (q) => {
+        const norm = s => String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]/g, "");
+        const nq = norm(q);
+        const rawHits = []; snapshot.forEach(rec => { const nm = fieldVal(rec.data(), FIELD.nurseName); if (norm(nm).includes(nq)) rawHits.push({ id: rec.id, name: nm }); });
+        const keptHits = allBookings.filter(b => norm(fieldVal(b.data, FIELD.nurseName)).includes(nq))
+          .map(b => ({ id: b.id, name: fieldVal(b.data, FIELD.nurseName), parsedDate: bDateKey(b), status: effStatus(b.data), rawDateType: typeof b.data.bookedSlotDate + (b.data.bookedSlotDate && b.data.bookedSlotDate.toDate ? " (Timestamp)" : "") }));
+        console.log("[findNurse] in raw snapshot:", rawHits.length, rawHits);
+        console.log("[findNurse] kept & loaded:", keptHits.length, keptHits);
+        console.log("[findNurse] active filters:", { search: searchText, pkg: pkgFilter, eng: engFilter, hc: hcFilter, city: cityFilter });
+        return keptHits;
+      };
 
       // Track newest syncRun (ms) across all docs → "Last synced" pill.
       // This is more honest than "when button was clicked" because it reflects
