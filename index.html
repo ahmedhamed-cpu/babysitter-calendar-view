@@ -490,6 +490,22 @@
     { name:"Warda Inog Zacaria", phone:"+9660570311068", whatsapp:"+9660570311068" },
   ];
 
+  // ---------- NAME REPAIR ----------
+  // Some names arrive from the source with corrupted spacing (spaces broken INTO
+  // the words, e.g. "Ma ry Ka ye"). We can't safely un-break arbitrary intra-word
+  // spaces without risking real two-word names, so we use an explicit correction
+  // map for the known-bad ones, plus a general trim/whitespace-collapse.
+  // To fix another mangled name: add  "corrupted lowercase": "Correct Name".
+  const NAME_FIXES = {
+    "ma ry ka ye": "Mary Kaye"
+  };
+  function cleanNurseName(raw) {
+    const s = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+    if (!s) return s;
+    const fix = NAME_FIXES[s.toLowerCase()];
+    return fix || s;
+  }
+
   // ---------- FUZZY NAME IDENTITY ----------
   // Minor spelling differences = same person. Different last name = different person.
   function editDistance(a, b) {
@@ -1582,6 +1598,8 @@
       const seen = new Set(), out = [];
       snapshot.forEach(rec => {
         const data = rec.data();
+        const rawNurse = fieldVal(data, FIELD.nurseName);
+        if (rawNurse != null && rawNurse !== "") data.nurseName = cleanNurseName(rawNurse);
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
         const hasNurse = nurse !== "" && nurse.toLowerCase() !== "unassigned";
         if (!hasNurse && normStatus(data.status) === "Pending") return; // show nurse-assigned (or genuinely status-tagged)
