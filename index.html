@@ -411,7 +411,7 @@
       { name:"Nenita Regalario",            iqama:"Expired",  schedule:"Hourly" },
       { name:"Ramla Saban",                 iqama:"Expired",  schedule:"Hourly" }
     ].map(r => ({ ...r, agency:"Helpful agency", city:"Riyadh" })),
-    ...["Evangeline Allera Ocampo","Jean Montesilio","Lorena B. Abog","Ma ry Ka ye","Marcelyn Matayao","Rosario Gajardo","Veronica Fidalgo"].map(n => ({ name:n, agency:"Tamaam homecare", city:"" }))
+    ...["Evangeline Allera Ocampo","Jean Montesilio","Lorena B. Abog","Mary Kaye","Marcelyn Matayao","Rosario Gajardo","Veronica Fidalgo"].map(n => ({ name:n, agency:"Tamaam homecare", city:"" }))
   ];
   const slug = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const rosterMap = {}; ROSTER.forEach(r => { rosterMap[slug(r.name)] = r; });
@@ -528,29 +528,38 @@
     const lastMatch = la === lb || fuzzyEq(la, lb);
     return firstMatch && lastMatch;
   }
-  let nameKeyMap = new Map();   // normalized raw name -> canonical key
-  let nameDisplay = new Map();  // canonical key -> display name
+  let nameKeyMap = new Map();   // normalized name -> identity key
+  let nameDisplay = new Map();  // identity key -> display name
   const normName = s => String(s).toLowerCase().replace(/\s+/g, " ").trim();
+  // Conservative identity: two names are the SAME person ONLY if they are identical
+  // after cleaning (case, whitespace, explicit NAME_FIXES corrections). We deliberately
+  // do NOT fuzzy-match — merging two different babysitters would corrupt attendance,
+  // utilisation and invoicing. If a real spelling variant needs merging, add it to
+  // NAME_FIXES so it maps to the canonical name explicitly.
   function rebuildNameIndex() {
     const raws = new Set();
     ROSTER.forEach(r => raws.add(r.name));
     Object.values(babysitterDocs).forEach(d => { if (d.name) raws.add(d.name); });
     allBookings.forEach(b => { const n = fieldVal(b.data, FIELD.nurseName); if (n) raws.add(String(n)); });
     NURSE_CONTACTS.forEach(c => raws.add(c.name));
-    const names = [...raws]; const parent = {};
-    const find = x => parent[x] === x ? x : (parent[x] = find(parent[x]));
-    names.forEach(n => parent[n] = n);
-    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) if (samePerson(names[i], names[j])) parent[find(names[i])] = find(names[j]);
-    const groups = {}; names.forEach(n => { const r = find(n); (groups[r] = groups[r] || []).push(n); });
-    const rosterSet = new Set(ROSTER.map(r => r.name));
+    const rosterClean = ROSTER.map(r => cleanNurseName(r.name));
     nameKeyMap = new Map(); nameDisplay = new Map();
-    Object.values(groups).forEach(grp => {
-      const canon = grp.find(n => rosterSet.has(n)) || grp.slice().sort((a, b) => b.length - a.length || a.localeCompare(b))[0];
+    const groups = {};   // exact normalized-clean name -> [cleaned display candidates]
+    raws.forEach(n => {
+      const clean = cleanNurseName(n);
+      const nk = normName(clean);
+      if (!nk) return;
+      (groups[nk] = groups[nk] || []).push(clean);
+    });
+    Object.entries(groups).forEach(([nk, cands]) => {
+      // Prefer a roster spelling for display; else the tidiest cleaned form.
+      const rosterName = rosterClean.find(rn => normName(rn) === nk);
+      const canon = rosterName || cands.slice().sort((a, b) => b.length - a.length || a.localeCompare(b))[0];
       const key = slug(canon);
-      grp.forEach(n => nameKeyMap.set(normName(n), key));
+      nameKeyMap.set(nk, key);
       nameDisplay.set(key, canon);
     });
-    // Attach phone/WhatsApp to each identity (after clustering, so spelling variants share a key)
+    // Attach phone/WhatsApp by exact identity.
     nurseContactByKey = {};
     NURSE_CONTACTS.forEach(c => { const k = idKey(c.name); if (!nurseContactByKey[k]) nurseContactByKey[k] = { phone: c.phone, whatsapp: c.whatsapp }; });
   }
@@ -559,8 +568,8 @@
   const telLink = raw => { const d = String(raw||"").replace(/[^\d+]/g, ""); return d ? ("tel:" + (d[0]==="+"?d:"+"+d.replace(/^\+/,""))) : ""; };
   const waLink  = raw => { const d = String(raw||"").replace(/\D/g, ""); return d ? ("https://wa.me/" + d) : ""; };
   const nurseContact = name => nurseContactByKey[idKey(name)] || null;
-  const idKey = name => nameKeyMap.get(normName(name)) || slug(name);
-  const displayName = name => nameDisplay.get(idKey(name)) || name;
+  const idKey = name => nameKeyMap.get(normName(cleanNurseName(name))) || slug(cleanNurseName(name));
+  const displayName = name => nameDisplay.get(idKey(name)) || cleanNurseName(name);
 
   // ---------- FIELD ACCESS ----------
   const normKey = k => String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
