@@ -411,7 +411,7 @@
       { name:"Nenita Regalario",            iqama:"Expired",  schedule:"Hourly" },
       { name:"Ramla Saban",                 iqama:"Expired",  schedule:"Hourly" }
     ].map(r => ({ ...r, agency:"Helpful agency", city:"Riyadh" })),
-    ...["Evangeline Allera Ocampo","Jean Montesilio","Lorena B. Abog","Mary Kaye","Marcelyn Matayao","Rosario Gajardo","Veronica Fidalgo"].map(n => ({ name:n, agency:"Tamaam homecare", city:"" }))
+    ...["Evangeline Allera Ocampo","Jean Montesilio","Lorena B. Abog","Ma ry Ka ye","Marcelyn Matayao","Rosario Gajardo","Veronica Fidalgo"].map(n => ({ name:n, agency:"Tamaam homecare", city:"" }))
   ];
   const slug = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const rosterMap = {}; ROSTER.forEach(r => { rosterMap[slug(r.name)] = r; });
