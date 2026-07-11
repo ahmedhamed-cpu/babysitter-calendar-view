@@ -656,17 +656,33 @@
   ];
   const COMP_COLOR = { "COMPLIANT":"#10b981", "PARTIAL":"#f59e0b", "NON-COMPLIANT":"#ef4444", "":"#94a3b8" };
   // Newest-wins across the two sources: `compliance` (entered in this dashboard) and
-  // `sheetCompliance` (synced from the Google Sheet by n8n). Whichever has the newer
-  // updatedAt is shown, so a sheet edit and a dashboard edit never clobber each other.
+  // the sheet-synced record. The sheet record may arrive as a nested object, as a
+  // JSON string (`sheetComplianceJson`), or — from an earlier flat write — as
+  // top-level fields with source:"sheet". We normalise all three.
+  const _parseJSON = s => { try { return typeof s === "string" ? JSON.parse(s) : (s && typeof s === "object" ? s : null); } catch (e) { return null; } };
+  const _tsMs = x => {
+    if (!x) return 0;
+    if (typeof x === "object") { if (typeof x.toDate === "function") return x.toDate().getTime(); if (x.seconds != null) return x.seconds * 1000; return 0; }
+    const p = Date.parse(x); return isNaN(p) ? 0 : p;
+  };
+  function sheetComplianceOf(d) {
+    if (d.sheetCompliance && typeof d.sheetCompliance === "object") return d.sheetCompliance;
+    if (d.sheetComplianceJson) { const o = _parseJSON(d.sheetComplianceJson); if (o) return o; }
+    // Legacy flat write: compliance fields sit at top level with source:"sheet".
+    if (d.source === "sheet" && (d.onTime !== undefined || d.jobCompleted !== undefined || d.verifiedBy !== undefined)) {
+      return { onTime:d.onTime, selfieShared:d.selfieShared, selfieTimestamp:d.selfieTimestamp,
+        uniformCorrect:d.uniformCorrect, jobCompleted:d.jobCompleted, verifiedBy:d.verifiedBy,
+        verificationDate:d.verificationDate, homecare:d.homecare, city:d.city, nurseName:d.nurseName,
+        orderStatus:d.orderStatus, confirmedDate:d.confirmedDate, confirmedHour:d.confirmedHour,
+        delay:d.delay, source:"sheet", updatedAt:d.updatedAt };
+    }
+    return null;
+  }
   const complianceOf = d => {
     if (!d) return null;
     const a = (d.compliance && typeof d.compliance === "object") ? d.compliance : null;
-    const b = (d.sheetCompliance && typeof d.sheetCompliance === "object") ? d.sheetCompliance : null;
-    if (a && b) {
-      const ta = Date.parse(a.updatedAt || a.verificationDate || "") || 0;
-      const tb = Date.parse(b.updatedAt || b.verificationDate || "") || 0;
-      return tb > ta ? b : a;
-    }
+    const b = sheetComplianceOf(d);
+    if (a && b) return _tsMs(b.updatedAt || b.verificationDate) > _tsMs(a.updatedAt || a.verificationDate) ? b : a;
     return a || b || null;
   };
   function computeCompliance(c) {
