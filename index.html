@@ -400,8 +400,9 @@
   // together on demand. The hourly schedules on both workflows remain as a safety
   // net; the button just accelerates freshness when ops needs it right now.
   const SYNC_WEBHOOKS = {
-    upsert: "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-upsert",
-    del:    "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-delete"
+    upsert:     "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-upsert",
+    del:        "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-delete",
+    compliance: "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-compliance"
   };
   // Button is debounced for this many ms after a click, so nobody hammers it.
   const SYNC_COOLDOWN_MS = 45000;
@@ -654,7 +655,20 @@
     { key: "jobCompleted",   label: "Job Marked Completed" }
   ];
   const COMP_COLOR = { "COMPLIANT":"#10b981", "PARTIAL":"#f59e0b", "NON-COMPLIANT":"#ef4444", "":"#94a3b8" };
-  const complianceOf = d => (d && d.compliance && typeof d.compliance === "object") ? d.compliance : null;
+  // Newest-wins across the two sources: `compliance` (entered in this dashboard) and
+  // `sheetCompliance` (synced from the Google Sheet by n8n). Whichever has the newer
+  // updatedAt is shown, so a sheet edit and a dashboard edit never clobber each other.
+  const complianceOf = d => {
+    if (!d) return null;
+    const a = (d.compliance && typeof d.compliance === "object") ? d.compliance : null;
+    const b = (d.sheetCompliance && typeof d.sheetCompliance === "object") ? d.sheetCompliance : null;
+    if (a && b) {
+      const ta = Date.parse(a.updatedAt || a.verificationDate || "") || 0;
+      const tb = Date.parse(b.updatedAt || b.verificationDate || "") || 0;
+      return tb > ta ? b : a;
+    }
+    return a || b || null;
+  };
   function computeCompliance(c) {
     if (!c) return { score:null, status:"", answered:0, yes:0, verified:false };
     const vals = COMPLIANCE_CHECKS.map(k => c[k.key]);
@@ -1700,7 +1714,7 @@
     // we don't read the response — proof of success is syncRun bumping in Firestore.
     const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => { console.warn("sync webhook:", url, err); throw err; });
     let ok = true;
-    try { await Promise.all([kick(SYNC_WEBHOOKS.upsert), kick(SYNC_WEBHOOKS.del)]); }
+    try { await Promise.all([kick(SYNC_WEBHOOKS.upsert), kick(SYNC_WEBHOOKS.del), kick(SYNC_WEBHOOKS.compliance)]); }
     catch (e) { ok = false; console.error("sync trigger failed:", e); }
     label.textContent = ok ? "Requested…" : "Failed";
     if (!ok) setSyncDot("error");
