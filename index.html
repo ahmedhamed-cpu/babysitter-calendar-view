@@ -1891,11 +1891,21 @@
       const seen = new Set(), out = [];
       snapshot.forEach(rec => {
         const data = rec.data();
+        // If this doc came only from the compliance sheet sync (order not in the main
+        // booking sync), backfill the display fields from the compliance record so it
+        // still shows a name / home care / city and survives the nurse-name filter.
+        const _comp = complianceOf(data);
+        if (_comp) {
+          if ((!data.nurseName || String(data.nurseName).trim() === "") && _comp.nurseName) data.nurseName = _comp.nurseName;
+          if ((!data.homecare || String(data.homecare).trim() === "") && _comp.homecare) data.homecare = _comp.homecare;
+          if ((!data.city || String(data.city).trim() === "") && _comp.city) data.city = _comp.city;
+          if ((!data.orderStatus || String(data.orderStatus).trim() === "") && _comp.orderStatus) data.orderStatus = _comp.orderStatus;
+        }
         const rawNurse = fieldVal(data, FIELD.nurseName);
         if (rawNurse != null && rawNurse !== "") data.nurseName = cleanNurseName(rawNurse);
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
         const hasNurse = nurse !== "" && nurse.toLowerCase() !== "unassigned";
-        if (!hasNurse && normStatus(data.status) === "Pending") return; // show nurse-assigned (or genuinely status-tagged)
+        if (!hasNurse && normStatus(data.status) === "Pending" && !_comp) return; // keep compliance-only rows
         if (seen.has(rec.id)) return; seen.add(rec.id);
         out.push({ id: rec.id, data });
       });
