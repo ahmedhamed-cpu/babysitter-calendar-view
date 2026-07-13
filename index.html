@@ -113,6 +113,12 @@
   .comp-tg.active.yes { background:#10b981; color:#fff; border-color:#10b981; }
   .comp-tg.active.no  { background:#ef4444; color:#fff; border-color:#ef4444; }
   .comp-tg.active.na  { background:var(--btn-active-bg); color:var(--btn-active-text); border-color:var(--btn-active-bg); }
+  /* modal tab switch */
+  .modal-tabs { background:var(--surface); border:1px solid var(--border); }
+  .modal-tab { font-size:13px; font-weight:600; padding:6px 10px; border-radius:9px; color:var(--text-2); background:transparent; cursor:pointer; transition:all .18s var(--spring); display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+  .modal-tab[data-active="true"] { background:var(--btn-active-bg); color:var(--btn-active-text); box-shadow:var(--hover-shadow); }
+  .modal-tab:not([data-active="true"]):hover { color:var(--text); }
+  .mtab-dot { width:7px; height:7px; border-radius:50%; background:#10b981; display:inline-block; }
   @keyframes bs-pulse {
     0%   { box-shadow: 0 0 0 0 rgba(52,199,89,.55); }
     70%  { box-shadow: 0 0 0 6px rgba(52,199,89,0); }
@@ -147,6 +153,30 @@
     margin-top: 4px; font-size: 10.5px; font-weight: 600; line-height: 1.2;
     color: var(--muted-2, #7d8aa0); text-align: center; letter-spacing: .1px;
     max-width: 150px;
+  }
+  /* ---------- Responsive: tablet & mobile ---------- */
+  @media (max-width: 900px) {
+    /* View tabs scroll horizontally instead of wrapping into a tall block */
+    .view-tabs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    .view-tabs::-webkit-scrollbar { display: none; }
+    .view-btn { white-space: nowrap; flex: 0 0 auto; }
+  }
+  @media (max-width: 640px) {
+    /* Tighten the header on phones */
+    h1 { font-size: 1.02rem; }
+    #subtitle { display: none; }
+    .sync-label { display: none; }               /* keep the signal dot + icon, drop the text */
+    .sync-btn { padding-left: 8px; padding-right: 8px; }
+    .sync-stamp { max-width: 120px; }
+    /* Give KPI tiles and summary tiles room to wrap two-up */
+    .kpi { flex: 1 1 44%; }
+    /* Modal is near full-width and scrolls within the viewport */
+    .modal-backdrop { padding: 10px; align-items: flex-start; padding-top: 24px; }
+    .modal-tab { font-size: 12px; padding: 6px 6px; }
+  }
+  @media (max-width: 400px) {
+    body { font-size: 14px; }
+    .kpi { flex: 1 1 100%; }
   }
   @media print {
     body * { visibility:hidden; }
@@ -303,70 +333,80 @@
 
 <!-- STATUS MODAL -->
 <div id="status-modal" class="modal-backdrop hidden">
-  <div class="card rounded-2xl shadow-xl w-[380px] max-w-full p-5">
+  <div class="card rounded-2xl shadow-xl w-[380px] max-w-[92vw] p-5 max-h-[90vh] overflow-y-auto">
     <div class="flex items-start justify-between mb-1">
       <h3 class="font-bold text-base" id="modal-nurse-name">&mdash;</h3>
       <button id="modal-close" class="muted2 hover:opacity-70 text-xl leading-none">&times;</button>
     </div>
-    <p class="text-sm muted mb-4" id="modal-customer-name">&mdash;</p>
-    <div class="space-y-2 text-sm muted mb-4">
-      <div class="flex justify-between gap-3"><span>Order ID</span><span class="font-mono text-xs muted2 truncate" id="modal-order-id">&mdash;</span></div>
-      <div class="flex justify-between"><span>Customer phone</span><a id="modal-customer-phone" class="text-right font-medium" style="color:var(--gold-dark)">&mdash;</a></div>
-      <div class="flex justify-between"><span>Time</span><span id="modal-time">&mdash;</span></div>
-      <div class="flex justify-between"><span>Duration</span><span id="modal-duration">&mdash;</span></div>
-      <div class="flex justify-between"><span>Package</span><span id="modal-package" class="text-right">&mdash;</span></div>
-      <div class="flex justify-between"><span>Home care</span><span id="modal-homecare" class="text-right">&mdash;</span></div>
-      <div class="flex justify-between"><span>City</span><span id="modal-city" class="text-right">&mdash;</span></div>
-      <div class="flex justify-between"><span>B2B partner</span><span id="modal-b2b" class="text-right">&mdash;</span></div>
-      <div class="flex justify-between"><span>Booking type</span><span id="modal-btype" class="text-right">&mdash;</span></div>
-      <div class="flex justify-between"><span>Current status</span><span class="font-semibold" id="modal-current-status">&mdash;</span></div>
-      <div class="flex justify-between"><span>Last updated</span><span class="text-xs" id="modal-updated">&mdash;</span></div>
-    </div>
-    <div class="admin-only">
-      <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-2">Set status</p>
-      <div class="grid grid-cols-2 gap-2">
-        <button data-status="Attended" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">&#10003; Attended</button>
-        <button data-status="Absent" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100">&#10005; Absent</button>
-        <button data-status="Sick Leave" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100">&#9888; Sick Leave</button>
-        <button data-status="No Show" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100">&#8856; No Show</button>
-      </div>
-      <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
-    </div>
-    <p class="viewer-only text-xs muted2 italic">View-only access — marking attendance and status is limited to admins.</p>
+    <p class="text-sm muted" id="modal-customer-name">&mdash;</p>
 
-    <!-- COMPLIANCE -->
-    <div id="modal-compliance" class="mt-4 pt-4 border-t brd">
-      <div class="flex items-center justify-between mb-2">
-        <p class="text-xs font-semibold muted2 uppercase tracking-wide">Compliance</p>
-        <span id="comp-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:rgba(148,163,184,.16);color:#94a3b8">Not verified</span>
+    <!-- Tab switch: keeps the card compact by showing one section at a time -->
+    <div class="modal-tabs flex gap-1 my-3 p-1 rounded-xl">
+      <button id="mtab-status" class="modal-tab flex-1" data-active="true">Status &amp; Contact</button>
+      <button id="mtab-compliance" class="modal-tab flex-1" data-active="false">Compliance <span id="mtab-comp-dot" class="mtab-dot hidden"></span></button>
+    </div>
+
+    <!-- ===== PANE 1: STATUS & CONTACT ===== -->
+    <div id="mpane-status">
+      <div class="space-y-2 text-sm muted mb-4">
+        <div class="flex justify-between gap-3"><span>Order ID</span><span class="font-mono text-xs muted2 truncate" id="modal-order-id">&mdash;</span></div>
+        <div class="flex justify-between"><span>Customer phone</span><a id="modal-customer-phone" class="text-right font-medium" style="color:var(--gold-dark)">&mdash;</a></div>
+        <div class="flex justify-between"><span>Time</span><span id="modal-time">&mdash;</span></div>
+        <div class="flex justify-between"><span>Duration</span><span id="modal-duration">&mdash;</span></div>
+        <div class="flex justify-between"><span>Package</span><span id="modal-package" class="text-right">&mdash;</span></div>
+        <div class="flex justify-between"><span>Home care</span><span id="modal-homecare" class="text-right">&mdash;</span></div>
+        <div class="flex justify-between"><span>City</span><span id="modal-city" class="text-right">&mdash;</span></div>
+        <div class="flex justify-between"><span>B2B partner</span><span id="modal-b2b" class="text-right">&mdash;</span></div>
+        <div class="flex justify-between"><span>Booking type</span><span id="modal-btype" class="text-right">&mdash;</span></div>
+        <div class="flex justify-between"><span>Current status</span><span class="font-semibold" id="modal-current-status">&mdash;</span></div>
+        <div class="flex justify-between"><span>Last updated</span><span class="text-xs" id="modal-updated">&mdash;</span></div>
       </div>
-      <div id="comp-auto" class="text-xs muted2 mb-3">&mdash;</div>
-      <!-- Admin editable -->
       <div class="admin-only">
-        <div id="comp-checks" class="space-y-1.5"></div>
-        <div class="flex items-center justify-between text-sm gap-2 mt-2">
-          <span>Selfie timestamp</span>
-          <input id="comp-selfie-ts" type="text" placeholder="e.g. 09:12" class="icon-input h-8 px-2 rounded-md border brd text-sm w-32 text-right" />
+        <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-2">Set status</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button data-status="Attended" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">&#10003; Attended</button>
+          <button data-status="Absent" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100">&#10005; Absent</button>
+          <button data-status="Sick Leave" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100">&#9888; Sick Leave</button>
+          <button data-status="No Show" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100">&#8856; No Show</button>
         </div>
-        <div class="flex items-center justify-between text-xs muted2 mt-1">
-          <span>Verified by</span><span id="comp-verified-by">&mdash;</span>
-        </div>
-        <button id="comp-save" class="w-full mt-3 px-3 py-2 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Save compliance</button>
-        <button id="comp-clear" class="w-full mt-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border brd muted hover:opacity-70">Clear compliance</button>
+        <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
       </div>
-      <!-- Viewer read-only -->
-      <div class="viewer-only text-sm space-y-1" id="comp-readonly"></div>
+      <p class="viewer-only text-xs muted2 italic">View-only access — marking attendance and status is limited to admins.</p>
+
+      <div id="modal-locations" class="mt-4 grid grid-cols-2 gap-2">
+        <a id="modal-client-loc" target="_blank" rel="noopener noreferrer" class="hidden col-span-2 block text-center px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127968; Client location &amp; ETA</a>
+        <a id="modal-call-nurse" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128222; Call nurse</a>
+        <a id="modal-wa-nurse" target="_blank" rel="noopener noreferrer" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128172; WhatsApp nurse</a>
+      </div>
+      <p id="modal-loc-none" class="hidden text-xs muted2 italic mt-3">No location or contact links available for this booking.</p>
+      <div id="modal-history" class="mt-4 hidden">
+        <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-1">Recent changes</p>
+        <div id="modal-history-list" class="text-xs muted space-y-0.5"></div>
+      </div>
     </div>
 
-    <div id="modal-locations" class="mt-4 grid grid-cols-2 gap-2">
-      <a id="modal-client-loc" target="_blank" rel="noopener noreferrer" class="hidden col-span-2 block text-center px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127968; Client location &amp; ETA</a>
-      <a id="modal-call-nurse" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128222; Call nurse</a>
-      <a id="modal-wa-nurse" target="_blank" rel="noopener noreferrer" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128172; WhatsApp nurse</a>
-    </div>
-    <p id="modal-loc-none" class="hidden text-xs muted2 italic mt-3">No location or contact links available for this booking.</p>
-    <div id="modal-history" class="mt-4 hidden">
-      <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-1">Recent changes</p>
-      <div id="modal-history-list" class="text-xs muted space-y-0.5"></div>
+    <!-- ===== PANE 2: COMPLIANCE ===== -->
+    <div id="mpane-compliance" class="hidden">
+      <div id="modal-compliance">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs font-semibold muted2 uppercase tracking-wide">Compliance</p>
+          <span id="comp-badge" class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:rgba(148,163,184,.16);color:#94a3b8">Not verified</span>
+        </div>
+        <div id="comp-auto" class="text-xs muted2 mb-3">&mdash;</div>
+        <div class="admin-only">
+          <div id="comp-checks" class="space-y-1.5"></div>
+          <div class="flex items-center justify-between text-sm gap-2 mt-2">
+            <span>Selfie timestamp</span>
+            <input id="comp-selfie-ts" type="text" placeholder="e.g. 09:12" class="icon-input h-8 px-2 rounded-md border brd text-sm w-32 text-right" />
+          </div>
+          <div class="flex items-center justify-between text-xs muted2 mt-1">
+            <span>Verified by</span><span id="comp-verified-by">&mdash;</span>
+          </div>
+          <button id="comp-save" class="w-full mt-3 px-3 py-2 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Save compliance</button>
+          <button id="comp-clear" class="w-full mt-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border brd muted hover:opacity-70">Clear compliance</button>
+        </div>
+        <div class="viewer-only text-sm space-y-1" id="comp-readonly"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1554,6 +1594,9 @@
     renderComplianceChecks();
     updateComplianceBadge();
     renderComplianceReadonly(d);
+    // Always open on the Status tab; flag the Compliance tab if a record exists.
+    switchModalTab("status");
+    document.getElementById("mtab-comp-dot").classList.toggle("hidden", !computeCompliance(savedComp).verified);
 
     modal.classList.remove("hidden");
   }
@@ -1581,6 +1624,15 @@
 
   // ----- Compliance modal logic -----
   let modalCompliance = {};
+  function switchModalTab(tab) {
+    const isComp = tab === "compliance";
+    document.getElementById("mtab-status").setAttribute("data-active", isComp ? "false" : "true");
+    document.getElementById("mtab-compliance").setAttribute("data-active", isComp ? "true" : "false");
+    document.getElementById("mpane-status").classList.toggle("hidden", isComp);
+    document.getElementById("mpane-compliance").classList.toggle("hidden", !isComp);
+  }
+  document.getElementById("mtab-status").addEventListener("click", () => switchModalTab("status"));
+  document.getElementById("mtab-compliance").addEventListener("click", () => switchModalTab("compliance"));
   function renderComplianceChecks() {
     const wrap = document.getElementById("comp-checks"); if (!wrap) return;
     wrap.innerHTML = COMPLIANCE_CHECKS.map(c => {
