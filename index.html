@@ -252,11 +252,17 @@
       <button id="view-range" class="view-btn" data-view="range" data-active="false">Range</button>
       <button id="view-util" class="view-btn" data-view="utilisation" data-active="false">Utilisation</button>
       <button id="view-compliance" class="view-btn" data-view="compliance" data-active="false">Compliance</button>
+      <button id="view-revenue" class="view-btn" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
       <span>From</span><input type="date" id="range-from" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
       <span>To</span><input type="date" id="range-to" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
+    </div>
+    <div id="revenue-controls" class="hidden items-center gap-2 text-sm muted">
+      <span>Month</span><input type="month" id="rev-month" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
+      <span class="ml-2">Agency rate</span>
+      <div class="flex items-center gap-1"><input type="number" id="rev-rate" min="0" step="0.5" class="icon-input h-9 px-2 rounded-lg border brd text-sm w-20 text-right" /><span>SAR/hr</span></div>
     </div>
     <input id="search-input" type="text" placeholder="Search customer or nurse&hellip;" class="icon-input h-9 px-3 rounded-lg border brd text-sm w-56" />
     <select id="pkg-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All packages</option></select>
@@ -274,6 +280,7 @@
         <button id="exp-view" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export current view (CSV)</button>
         <button id="exp-exceptions" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export exceptions for invoicing (CSV)</button>
         <button id="exp-compliance" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export compliance report (CSV)</button>
+        <button id="exp-invoicing" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export invoicing timesheet (CSV)</button>
         <button id="exp-summary" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">End-of-day summary</button>
       </div>
     </details>
@@ -314,6 +321,15 @@
       <div class="grid-scroll overflow-x-auto"><div id="comp-grid" class="min-w-[1040px]"></div></div>
     </div>
     <p id="comp-note" class="text-xs muted2 mt-3"></p>
+  </div>
+
+  <!-- REVENUE / INVOICING VIEW -->
+  <div id="revenue-container" class="hidden">
+    <div id="rev-summary" class="flex flex-wrap gap-2 mb-4"></div>
+    <div class="card rounded-2xl overflow-hidden">
+      <div class="grid-scroll overflow-x-auto"><div id="rev-grid" class="min-w-[1200px]"></div></div>
+    </div>
+    <p id="rev-note" class="text-xs muted2 mt-3"></p>
   </div>
 
   <!-- BABYSITTER PROFILES -->
@@ -737,6 +753,61 @@
     return { score, status, answered, yes, verified:true };
   }
   const delayOf = d => { const v = (d && (d.delayInDelivery ?? fieldVal(d, ["Delay In Delivery (Mins)","delayInDelivery","Delay"]))); return (v === undefined || v === null || v === "") ? null : Number(v); };
+
+  // ---------- REVENUE / INVOICING ----------
+  // Agency hourly rate. Editable in the Revenue tab; persisted per-browser.
+  let AGENCY_RATE = (() => { try { const v = parseFloat(localStorage.getItem("bs_agency_rate")); return isNaN(v) ? 25 : v; } catch (e) { return 25; } })();
+  function setAgencyRate(v) { AGENCY_RATE = (isNaN(v) || v < 0) ? 25 : v; try { localStorage.setItem("bs_agency_rate", String(AGENCY_RATE)); } catch (e) {} }
+
+  const EXCEPTION_SET = new Set(["Sick Leave", "No Show", "Absent"]);
+
+  // Package hours: from the package name ("... 6 Hours"); fallback to logged hours.
+  function packageHours(d) {
+    const p = fieldVal(d, FIELD.pkg);
+    const m = pkgMinutes(p);
+    if (m != null) return Math.round(m / 60 * 100) / 100;
+    const lg = loggedHours(d);
+    return lg != null ? lg : null;
+  }
+  // Actual logged hours from nurse login -> logout (reconciliation figure).
+  function loggedHours(d) {
+    const s = d.nurseStartedAt, e = d.nurseEndedAt;
+    const sm = _tsMs(s), em = _tsMs(e);
+    if (!sm || !em || em <= sm) return null;
+    return Math.round((em - sm) / 3600000 * 100) / 100;
+  }
+  // Penalty hours (from the Penalty Tracker sheet sync).
+  function penaltyOf(d) {
+    if (!d) return { hours: 0, reason: "" };
+    let p = d.penalty && typeof d.penalty === "object" ? d.penalty : null;
+    if (!p && d.penaltyJson) p = _parseJSON(d.penaltyJson);
+    if (!p) return { hours: 0, reason: "" };
+    return { hours: Number(p.hours) || 0, reason: p.reason || "" };
+  }
+  const revenueOf = d => { const v = d && d.finalPrice; return (v === undefined || v === null || v === "") ? null : Number(v); };
+  const listPriceOf = d => { const v = d && d.totalAmount; return (v === undefined || v === null || v === "") ? null : Number(v); };
+
+  // The full billing calculation for one visit.
+  function billOf(d) {
+    const status = effStatus(d);
+    const isException = EXCEPTION_SET.has(status);
+    const pkgH = packageHours(d);
+    const logH = loggedHours(d);
+    const pen = penaltyOf(d);
+    // Exceptions => 0 billable. Otherwise package hours minus penalty hours.
+    let billable = isException ? 0 : (pkgH != null ? Math.max(0, pkgH - pen.hours) : 0);
+    billable = Math.round(billable * 100) / 100;
+    const cost = Math.round(billable * AGENCY_RATE * 100) / 100;
+    const revenue = revenueOf(d);
+    const list = listPriceOf(d);
+    const revPerHour = (revenue != null && pkgH) ? Math.round(revenue / pkgH * 100) / 100 : null;
+    const margin = (revenue != null) ? Math.round((revenue - cost) * 100) / 100 : null;
+    const usedFallback = pkgMinutes(fieldVal(d, FIELD.pkg)) == null; // package name had no hours
+    const review = isException || pen.hours > 0 || usedFallback || revenue == null || (logH != null && pkgH != null && Math.abs(logH - pkgH) >= 1);
+    return { status, isException, pkgH, logH, penaltyHours: pen.hours, penaltyReason: pen.reason, billable, cost, revenue, list, revPerHour, margin, usedFallback, review };
+  }
+  const fmtSAR = n => (n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " SAR");
+  const monthKeyOf = dt => dt ? dt.getUTCFullYear() + "-" + String(dt.getUTCMonth() + 1).padStart(2, "0") : "";
   function engBadge(name) {
     const e = engagementOf(name), c = ENG_COLOR[e];
     return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(c,0.16)};color:${c}">${e}</span>`;
@@ -1110,12 +1181,14 @@
     bsUniverse = babysitterUniverse();
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance") ? "none" : "flex";
+    document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","profiles-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","profiles-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
+    if (viewMode === "revenue") { show("revenue-container"); document.getElementById("empty-state").classList.add("hidden"); renderRevenue(); return; }
 
     const scope = scopeNonStatus();
     renderKPI(scope, viewMode === "day" ? "day" : "span");
@@ -1426,6 +1499,121 @@
     document.getElementById("comp-note").innerHTML = `Score = % of the four checks marked <b>Yes</b> (each 25%). <b>100 = COMPLIANT</b>, <b>60–99 = PARTIAL</b>, <b>&lt;60 = NON-COMPLIANT</b>. "Not verified" = no checks entered yet. Click any row to open the booking and record compliance${isAdmin?"":" (admins only)"}. Period = the From/To dates above.`;
   }
 
+  // ---------- REVENUE / INVOICING VIEW ----------
+  // Build the per-visit invoice rows for the selected month.
+  function revenueRows() {
+    const mk = document.getElementById("rev-month").value; // "YYYY-MM"
+    const rows = [];
+    allBookings.forEach(b => {
+      const d = b.data; const start = parseSlotDateTime(d);
+      if (!start || monthKeyOf(start) !== mk) return;
+      const bill = billOf(d);
+      rows.push({
+        id: b.id, b, d, start,
+        date: dateKey(start),
+        nurse: displayName(fieldVal(d, FIELD.nurseName) || "—"),
+        client: fieldVal(d, FIELD.customer) || fieldVal(d, ["User_Name","userName","User Name"]) || "—",
+        pkg: fieldVal(d, FIELD.pkg) || "—",
+        homecare: homeCareOf(fieldVal(d, FIELD.nurseName)||"") || fieldVal(d, FIELD.homecare) || "—",
+        city: fieldVal(d, FIELD.city) || "—",
+        ...bill
+      });
+    });
+    rows.sort((a,b) => a.nurse.localeCompare(b.nurse) || a.start - b.start);
+    return rows;
+  }
+
+  function renderRevenue() {
+    // Default the month picker to the current month on first entry.
+    const mEl = document.getElementById("rev-month");
+    if (!mEl.value) mEl.value = monthKeyOf(nowR());
+    document.getElementById("rev-rate").value = AGENCY_RATE;
+
+    const rows = revenueRows();
+    const mk = mEl.value;
+    document.getElementById("subtitle").textContent = "Revenue & invoicing · " + mk;
+    document.getElementById("order-count").textContent = rows.length + (rows.length===1?" visit":" visits");
+
+    const sum = (arr, f) => arr.reduce((s,x)=>s+(f(x)||0),0);
+    const totBill = sum(rows, r=>r.billable), totCost = sum(rows, r=>r.cost);
+    const totRev = sum(rows, r=> r.revenue||0), totMargin = totRev - totCost;
+    const exceptions = rows.filter(r=>r.isException).length;
+    const flagged = rows.filter(r=>r.review).length;
+
+    const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
+    document.getElementById("rev-summary").innerHTML =
+      tile("Visits", rows.length) +
+      tile("Billable hours", (Math.round(totBill*10)/10)) +
+      tile("Cost (agency)", fmtSAR(totCost), "#ef4444") +
+      tile("Revenue", fmtSAR(totRev), "#10b981") +
+      tile("Margin", fmtSAR(totMargin), totMargin>=0?"#10b981":"#ef4444") +
+      tile("Exceptions", exceptions, exceptions?"#f59e0b":"") +
+      tile("Needs review", flagged, flagged?"#f59e0b":"");
+
+    const head = `<div class="flex border-b brd surface sticky top-0 z-10 text-[11px] uppercase tracking-wide muted2 font-semibold">
+      <div class="w-[84px] shrink-0 px-2 py-2 border-r brd">Date</div>
+      <div class="w-[140px] shrink-0 px-2 py-2 border-r brd2">Babysitter</div>
+      <div class="w-[130px] shrink-0 px-2 py-2 border-r brd2">Client</div>
+      <div class="w-[150px] shrink-0 px-2 py-2 border-r brd2">Package</div>
+      <div class="w-[52px] shrink-0 px-2 py-2 text-right border-r brd2">Pkg h</div>
+      <div class="w-[52px] shrink-0 px-2 py-2 text-right border-r brd2">Log h</div>
+      <div class="w-[92px] shrink-0 px-2 py-2 border-r brd2">Status</div>
+      <div class="w-[52px] shrink-0 px-2 py-2 text-right border-r brd2">Pen h</div>
+      <div class="w-[60px] shrink-0 px-2 py-2 text-right border-r brd2">Bill h</div>
+      <div class="w-[96px] shrink-0 px-2 py-2 text-right border-r brd2">Cost</div>
+      <div class="w-[96px] shrink-0 px-2 py-2 text-right border-r brd2">Revenue</div>
+      <div class="w-[96px] shrink-0 px-2 py-2 text-right border-r brd2">Margin</div>
+      <div class="w-[44px] shrink-0 px-2 py-2 text-center">⚑</div></div>`;
+
+    if (!rows.length) {
+      document.getElementById("rev-grid").innerHTML = head + `<div class="text-center py-12 muted2 text-sm">No visits in ${mk}. Pick another month.</div>`;
+      document.getElementById("rev-note").textContent = "";
+      return;
+    }
+
+    let html = head;
+    let curNurse = null, nBill=0, nCost=0, nRev=0, nCount=0;
+    const subtotal = () => {
+      if (curNurse == null) return "";
+      const m = nRev - nCost;
+      const s = `<div class="flex border-b-2 brd items-center text-xs font-semibold" style="background:var(--surface)">
+        <div class="w-[84px] shrink-0 px-2 py-1.5 border-r brd"></div>
+        <div class="w-[140px] shrink-0 px-2 py-1.5 border-r brd2 truncate">${escapeHtml(curNurse)} — subtotal</div>
+        <div class="w-[130px] shrink-0 px-2 py-1.5 border-r brd2 muted2">${nCount} visit${nCount!==1?"s":""}</div>
+        <div class="flex-1 shrink-0 px-2 py-1.5 border-r brd2"></div>
+        <div class="w-[60px] shrink-0 px-2 py-1.5 text-right border-r brd2">${Math.round(nBill*10)/10}</div>
+        <div class="w-[96px] shrink-0 px-2 py-1.5 text-right border-r brd2" style="color:#ef4444">${fmtSAR(nCost)}</div>
+        <div class="w-[96px] shrink-0 px-2 py-1.5 text-right border-r brd2" style="color:#10b981">${fmtSAR(nRev)}</div>
+        <div class="w-[96px] shrink-0 px-2 py-1.5 text-right border-r brd2" style="color:${m>=0?'#10b981':'#ef4444'}">${fmtSAR(m)}</div>
+        <div class="w-[44px] shrink-0 px-2 py-1.5"></div></div>`;
+      return s;
+    };
+    rows.forEach((r, i) => {
+      if (curNurse !== null && r.nurse !== curNurse) { html += subtotal(); nBill=0; nCost=0; nRev=0; nCount=0; }
+      curNurse = r.nurse; nBill+=r.billable; nCost+=r.cost; nRev+=(r.revenue||0); nCount++;
+      const stCol = r.isException ? "#ef4444" : (r.status==="Attended" ? "#10b981" : "#94a3b8");
+      html += `<div class="flex border-b brd items-center text-sm hover:brightness-[0.98] cursor-pointer" data-rev-idx="${i}">
+        <div class="w-[84px] shrink-0 px-2 py-2 border-r brd muted">${r.date.slice(5)}</div>
+        <div class="w-[140px] shrink-0 px-2 py-2 border-r brd2 truncate"><span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full shrink-0" style="background:${colorFor(r.nurse)}"></span><span class="font-medium truncate" style="color:var(--text)">${escapeHtml(r.nurse)}</span></span></div>
+        <div class="w-[130px] shrink-0 px-2 py-2 border-r brd2 truncate muted">${escapeHtml(String(r.client))}</div>
+        <div class="w-[150px] shrink-0 px-2 py-2 border-r brd2 truncate muted">${escapeHtml(String(r.pkg))}</div>
+        <div class="w-[52px] shrink-0 px-2 py-2 text-right border-r brd2">${r.pkgH==null?'—':r.pkgH}</div>
+        <div class="w-[52px] shrink-0 px-2 py-2 text-right border-r brd2 muted2">${r.logH==null?'—':r.logH}</div>
+        <div class="w-[92px] shrink-0 px-2 py-2 border-r brd2"><span style="color:${stCol};font-weight:600">${r.status}</span></div>
+        <div class="w-[52px] shrink-0 px-2 py-2 text-right border-r brd2">${r.penaltyHours?('-'+r.penaltyHours):'—'}</div>
+        <div class="w-[60px] shrink-0 px-2 py-2 text-right border-r brd2 font-semibold">${r.billable}</div>
+        <div class="w-[96px] shrink-0 px-2 py-2 text-right border-r brd2" style="color:#ef4444">${fmtSAR(r.cost)}</div>
+        <div class="w-[96px] shrink-0 px-2 py-2 text-right border-r brd2" style="color:#10b981">${r.revenue==null?'—':fmtSAR(r.revenue)}</div>
+        <div class="w-[96px] shrink-0 px-2 py-2 text-right border-r brd2" style="color:${(r.margin||0)>=0?'#10b981':'#ef4444'}">${r.margin==null?'—':fmtSAR(r.margin)}</div>
+        <div class="w-[44px] shrink-0 px-2 py-2 text-center">${r.review?'<span title="Needs manual review" style="color:#f59e0b">⚑</span>':''}</div></div>`;
+    });
+    html += subtotal();
+    const grid = document.getElementById("rev-grid");
+    grid.innerHTML = html;
+    grid.querySelectorAll("[data-rev-idx]").forEach(el => el.addEventListener("click", () => { const r = rows[+el.getAttribute("data-rev-idx")]; if (r) openModal(r.b); }));
+    document.getElementById("rev-note").innerHTML = `Billable hours = package hours (from the package name) for <b>Attended</b> visits, minus penalty hours; exceptions (Sick&nbsp;Leave / No&nbsp;Show / Absent) = <b>0</b>. Cost = billable × <b>${AGENCY_RATE} SAR/hr</b>. Revenue = what the client paid (Final Price). Margin = revenue − cost. ⚑ = needs manual review (exception, penalty, package-hours fallback, missing revenue, or logged hours differ ≥1h). Use Export → "Export invoicing timesheet (CSV)".`;
+  }
+
   // ---------- BABYSITTER PROFILES ----------
   function renderProfiles() {
     const all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
@@ -1711,6 +1899,9 @@
   document.getElementById("view-range").addEventListener("click", () => setView("range"));
   document.getElementById("view-util").addEventListener("click", () => setView("utilisation"));
   document.getElementById("view-compliance").addEventListener("click", () => setView("compliance"));
+  document.getElementById("view-revenue").addEventListener("click", () => setView("revenue"));
+  document.getElementById("rev-month").addEventListener("change", () => { if (viewMode === "revenue") renderRevenue(); });
+  document.getElementById("rev-rate").addEventListener("change", (e) => { setAgencyRate(parseFloat(e.target.value)); if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
@@ -1723,6 +1914,7 @@
   document.getElementById("exp-view").addEventListener("click", () => { closeMenus(); exportViewCSV(); });
   document.getElementById("exp-exceptions").addEventListener("click", () => { closeMenus(); exportExceptionsCSV(); });
   document.getElementById("exp-compliance").addEventListener("click", () => { closeMenus(); exportComplianceCSV(); });
+  document.getElementById("exp-invoicing").addEventListener("click", () => { closeMenus(); exportInvoicingCSV(); });
   document.getElementById("exp-summary").addEventListener("click", () => { closeMenus(); openSummary(); });
   document.getElementById("summary-modal").addEventListener("click", e => { if (e.target.id === "summary-modal") closeSummary(); });
 
@@ -1902,6 +2094,66 @@
     });
     const tag = viewMode === "day" ? datePicker.value : (viewMode === "week" ? "week_"+currentDayKeys()[0] : rangeFrom.value+"_to_"+rangeTo.value);
     downloadFile("compliance_"+tag+".csv", toCSV(rows));
+  }
+
+  // Invoicing timesheet: one row per visit for the selected month, with agency cost,
+  // client revenue, margin, exceptions, penalties and notes — subtotaled per babysitter.
+  function exportInvoicingCSV() {
+    const mEl = document.getElementById("rev-month");
+    if (!mEl.value) mEl.value = monthKeyOf(nowR());
+    const rows = revenueRows();
+    if (!rows.length) { alert("No visits in " + mEl.value + " to export. Pick another month in the Revenue tab."); return; }
+    const out = [];
+    let curNurse = null, nBill=0, nCost=0, nRev=0, nCount=0;
+    const pushSubtotal = () => {
+      if (curNurse == null) return;
+      out.push({
+        "Date":"", "Child Order ID":"", "Client Name":"", "Babysitter": curNurse + " — SUBTOTAL",
+        "Package Name":"", "Package Hours":"", "Logged Hours":"", "Attendance Status": nCount+" visits",
+        "Exception/Notes":"", "Penalty Hours":"", "Billable Hours": Math.round(nBill*100)/100,
+        "Agency Rate": "", "Cost (SAR)": Math.round(nCost*100)/100,
+        "List Price (SAR)":"", "Final Price / Paid (SAR)": Math.round(nRev*100)/100,
+        "Revenue (SAR)": Math.round(nRev*100)/100, "Revenue/Hour":"", "Margin (SAR)": Math.round((nRev-nCost)*100)/100,
+        "Needs Review":"", "Home care":"", "City":""
+      });
+    };
+    rows.forEach(r => {
+      if (curNurse !== null && r.nurse !== curNurse) { pushSubtotal(); nBill=0; nCost=0; nRev=0; nCount=0; }
+      curNurse = r.nurse; nBill+=r.billable; nCost+=r.cost; nRev+=(r.revenue||0); nCount++;
+      out.push({
+        "Date": r.date,
+        "Child Order ID": r.id,
+        "Client Name": r.client,
+        "Babysitter": r.nurse,
+        "Package Name": r.pkg,
+        "Package Hours": r.pkgH == null ? "" : r.pkgH,
+        "Logged Hours": r.logH == null ? "" : r.logH,
+        "Attendance Status": r.status,
+        "Exception/Notes": r.isException ? r.status : (r.penaltyReason || ""),
+        "Penalty Hours": r.penaltyHours || 0,
+        "Billable Hours": r.billable,
+        "Agency Rate": AGENCY_RATE,
+        "Cost (SAR)": r.cost,
+        "List Price (SAR)": r.list == null ? "" : r.list,
+        "Final Price / Paid (SAR)": r.revenue == null ? "" : r.revenue,
+        "Revenue (SAR)": r.revenue == null ? "" : r.revenue,
+        "Revenue/Hour": r.revPerHour == null ? "" : r.revPerHour,
+        "Margin (SAR)": r.margin == null ? "" : r.margin,
+        "Needs Review": r.review ? "YES" : "",
+        "Home care": r.homecare,
+        "City": r.city
+      });
+    });
+    pushSubtotal();
+    // Grand total row
+    const g = rows.reduce((a,r)=>{a.bill+=r.billable;a.cost+=r.cost;a.rev+=(r.revenue||0);return a;},{bill:0,cost:0,rev:0});
+    out.push({ "Date":"", "Child Order ID":"", "Client Name":"", "Babysitter":"GRAND TOTAL",
+      "Package Name":"", "Package Hours":"", "Logged Hours":"", "Attendance Status": rows.length+" visits",
+      "Exception/Notes":"", "Penalty Hours":"", "Billable Hours": Math.round(g.bill*100)/100,
+      "Agency Rate":"", "Cost (SAR)": Math.round(g.cost*100)/100, "List Price (SAR)":"",
+      "Final Price / Paid (SAR)": Math.round(g.rev*100)/100, "Revenue (SAR)": Math.round(g.rev*100)/100,
+      "Revenue/Hour":"", "Margin (SAR)": Math.round((g.rev-g.cost)*100)/100, "Needs Review":"", "Home care":"", "City":"" });
+    downloadFile("invoicing_timesheet_" + mEl.value + ".csv", toCSV(out));
   }
 
   // ---------- SUMMARY ----------
