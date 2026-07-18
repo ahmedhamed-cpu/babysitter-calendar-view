@@ -2211,6 +2211,13 @@
       const seen = new Set(), out = [];
       snapshot.forEach(rec => {
         const data = rec.data();
+        // HARD EXCLUDE cancelled orders everywhere. The n8n delete workflow removes
+        // cancelled docs from Firestore, but there can be a lag (recency window /
+        // hourly schedule). This makes the dashboard instantly accurate: any order
+        // whose status is cancelled is dropped here, so it never appears on the
+        // calendar, in utilisation, in revenue, or in any metric.
+        const os = String(fieldVal(data, FIELD.orderStatus) || "").trim();
+        if (/^cancel/i.test(os)) return;
         // If this doc came only from the compliance sheet sync (order not in the main
         // booking sync), backfill the display fields from the compliance record so it
         // still shows a name / home care / city and survives the nurse-name filter.
@@ -2221,6 +2228,9 @@
           if ((!data.city || String(data.city).trim() === "") && _comp.city) data.city = _comp.city;
           if ((!data.orderStatus || String(data.orderStatus).trim() === "") && _comp.orderStatus) data.orderStatus = _comp.orderStatus;
         }
+        // Re-check after compliance backfill in case the status came from the sheet.
+        const os2 = String(fieldVal(data, FIELD.orderStatus) || "").trim();
+        if (/^cancel/i.test(os2)) return;
         const rawNurse = fieldVal(data, FIELD.nurseName);
         if (rawNurse != null && rawNurse !== "") data.nurseName = cleanNurseName(rawNurse);
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
