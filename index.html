@@ -125,6 +125,19 @@
   .tkt-pri { font-size:13px; font-weight:600; padding:7px 10px; border-radius:9px; border:1px solid var(--border); color:var(--text-2); background:var(--btn-bg); cursor:pointer; transition:all .15s var(--spring); }
   .tkt-pri[data-active="true"] { background:var(--btn-active-bg); color:var(--btn-active-text); border-color:var(--btn-active-bg); }
   .tkt-pri[data-pri="Urgent"][data-active="true"] { background:#ef4444; color:#fff; border-color:#ef4444; }
+  /* tickets tab */
+  .tkt-filter-btn { font-size:13px; font-weight:600; padding:5px 12px; border-radius:9px; border:1px solid var(--border); color:var(--text-2); background:var(--btn-bg); cursor:pointer; }
+  .tkt-filter-btn[data-active="true"] { background:var(--btn-active-bg); color:var(--btn-active-text); border-color:var(--btn-active-bg); }
+  .tkt-item { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .12s; }
+  .tkt-item:hover { background:var(--surface); }
+  .tkt-item[data-active="true"] { background:var(--surface); border-left:3px solid var(--btn-active-bg); }
+  .tkt-bubble { max-width:80%; padding:8px 12px; border-radius:14px; font-size:14px; line-height:1.4; }
+  .tkt-bubble.ops { background:var(--btn-active-bg); color:var(--btn-active-text); border-bottom-right-radius:4px; }
+  .tkt-bubble.homecare { background:var(--surface); border:1px solid var(--border); border-bottom-left-radius:4px; }
+  .tkt-row { display:flex; flex-direction:column; }
+  .tkt-row.ops { align-items:flex-end; }
+  .tkt-row.homecare { align-items:flex-start; }
+  .tkt-meta { font-size:10px; color:var(--text-2); margin-top:2px; }
   @keyframes bs-pulse {
     0%   { box-shadow: 0 0 0 0 rgba(52,199,89,.55); }
     70%  { box-shadow: 0 0 0 6px rgba(52,199,89,0); }
@@ -259,6 +272,7 @@
       <button id="view-util" class="view-btn staff-only" data-view="utilisation" data-active="false">Utilisation</button>
       <button id="view-compliance" class="view-btn staff-only" data-view="compliance" data-active="false">Compliance</button>
       <button id="view-revenue" class="view-btn staff-only" data-view="revenue" data-active="false">Revenue</button>
+      <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
       <button id="view-profiles" class="view-btn staff-only" data-view="profiles" data-active="false">Profiles</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
@@ -336,6 +350,33 @@
       <div class="grid-scroll overflow-x-auto"><div id="rev-grid" class="min-w-[1200px]"></div></div>
     </div>
     <p id="rev-note" class="text-xs muted2 mt-3"></p>
+  </div>
+
+  <!-- TICKETS VIEW -->
+  <div id="tickets-container" class="hidden">
+    <div class="flex gap-2 mb-3 items-center">
+      <div id="tkt-filter" class="flex gap-1">
+        <button data-tf="open" class="tkt-filter-btn" data-active="true">Open</button>
+        <button data-tf="resolved" class="tkt-filter-btn" data-active="false">Resolved</button>
+        <button data-tf="all" class="tkt-filter-btn" data-active="false">All</button>
+      </div>
+      <span id="tkt-count" class="text-xs muted2"></span>
+    </div>
+    <div class="grid gap-3" style="grid-template-columns: minmax(260px, 340px) 1fr;">
+      <div class="card rounded-2xl overflow-hidden" style="max-height:70vh;overflow-y:auto"><div id="tkt-list"></div></div>
+      <div class="card rounded-2xl overflow-hidden flex flex-col" style="max-height:70vh">
+        <div id="tkt-chat-empty" class="flex-1 flex items-center justify-center muted2 text-sm p-8 text-center">Select a ticket to view the conversation.</div>
+        <div id="tkt-chat" class="hidden flex flex-col" style="height:70vh">
+          <div id="tkt-chat-head" class="px-4 py-3 border-b brd shrink-0"></div>
+          <div id="tkt-chat-body" class="flex-1 overflow-y-auto px-4 py-3 space-y-2"></div>
+          <div id="tkt-chat-input" class="border-t brd p-3 shrink-0 flex gap-2 items-end">
+            <textarea id="tkt-reply" rows="1" placeholder="Type a reply…" class="icon-input flex-1 px-3 py-2 rounded-lg border brd text-sm resize-none"></textarea>
+            <button id="tkt-send" class="px-4 py-2 rounded-lg text-sm font-semibold shrink-0" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="text-xs muted2 mt-3">Tickets opened from a booking slot appear here. Replies are visible to the home care partner in their dashboard. Only admins and support can mark a ticket resolved.</p>
   </div>
 
   <!-- BABYSITTER PROFILES -->
@@ -470,7 +511,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, arrayUnion, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -1235,13 +1276,14 @@
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue") ? "none" : "flex";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","profiles-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
     if (viewMode === "revenue") { show("revenue-container"); document.getElementById("empty-state").classList.add("hidden"); renderRevenue(); return; }
+    if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
 
     const scope = scopeNonStatus();
     renderKPI(scope, viewMode === "day" ? "day" : "span");
@@ -1667,6 +1709,124 @@
     document.getElementById("rev-note").innerHTML = `Billable hours = package hours (from the package name) for <b>Attended</b> visits, minus penalty hours; exceptions (Sick&nbsp;Leave / No&nbsp;Show / Absent) = <b>0</b>. Cost = billable × <b>${AGENCY_RATE} SAR/hr</b>. Revenue = what the client paid (Final Price). Margin = revenue − cost. ⚑ = needs manual review (exception, penalty, package-hours fallback, missing revenue, or logged hours differ ≥1h). Use Export → "Export invoicing timesheet (CSV)".`;
   }
 
+  // ---------- TICKETS (two-way chat) ----------
+  let allTickets = [];
+  let tktFilter = "open";
+  let activeTicketId = null;
+  const tktMs = t => _tsMs(t && (t.updatedAt || t.createdAt));
+
+  function startTicketsListener() {
+    onSnapshot(collection(db, "tickets"), (snap) => {
+      const out = [];
+      snap.forEach(rec => {
+        const d = rec.data();
+        // Homecare only sees their own agency's tickets.
+        if (isHomecare) {
+          const hc = String(d.homecare || "").trim().toLowerCase();
+          if (!currentAgency || hc !== currentAgency.toLowerCase()) return;
+        }
+        out.push({ id: rec.id, ...d });
+      });
+      out.sort((a, b) => tktMs(b) - tktMs(a));
+      allTickets = out;
+      updateTicketsBadge();
+      if (viewMode === "tickets") renderTickets();
+    }, err => console.warn("tickets listener:", err));
+  }
+  function updateTicketsBadge() {
+    const open = allTickets.filter(t => t.status !== "resolved").length;
+    const b = document.getElementById("tickets-badge");
+    if (!b) return;
+    b.textContent = open;
+    b.classList.toggle("hidden", open === 0);
+  }
+  function ticketsForFilter() {
+    return allTickets.filter(t => tktFilter === "all" ? true : (tktFilter === "resolved" ? t.status === "resolved" : t.status !== "resolved"));
+  }
+  function renderTickets() {
+    const list = ticketsForFilter();
+    document.getElementById("subtitle").textContent = "Tickets";
+    document.getElementById("order-count").textContent = list.length + (list.length === 1 ? " ticket" : " tickets");
+    document.getElementById("tkt-count").textContent = list.length + " " + tktFilter;
+    const wrap = document.getElementById("tkt-list");
+    if (!list.length) { wrap.innerHTML = `<div class="p-6 text-center muted2 text-sm">No ${tktFilter==="all"?"":tktFilter+" "}tickets.</div>`; }
+    else {
+      const priColor = p => p === "Urgent" ? "#ef4444" : (p === "Low" ? "#94a3b8" : "#f59e0b");
+      wrap.innerHTML = list.map(t => {
+        const last = (t.messages && t.messages.length) ? t.messages[t.messages.length - 1] : null;
+        const preview = last ? (last.text || "").slice(0, 60) : "";
+        const when = fmtRelative(tktMs(t));
+        return `<div class="tkt-item" data-tid="${escapeHtml(t.id)}" data-active="${t.id===activeTicketId}">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold text-sm truncate" style="color:var(--text)">${escapeHtml(t.nurse||"—")}</span>
+            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(priColor(t.priority),0.16)};color:${priColor(t.priority)}">${escapeHtml(t.priority||"Normal")}</span>
+          </div>
+          <div class="text-xs muted2 truncate">${escapeHtml(t.category||"")} · ${escapeHtml(String(t.client||""))}</div>
+          <div class="text-xs muted truncate mt-0.5">${escapeHtml(preview)}</div>
+          <div class="flex items-center justify-between mt-1">
+            <span class="text-[10px] muted2">Order ${escapeHtml(String(t.orderId||""))} · ${escapeHtml(when)}</span>
+            ${t.status==="resolved" ? '<span class="text-[10px] font-semibold" style="color:#10b981">✓ Resolved</span>' : '<span class="text-[10px] font-semibold" style="color:#f59e0b">Open</span>'}
+          </div>
+        </div>`;
+      }).join("");
+      wrap.querySelectorAll(".tkt-item").forEach(el => el.addEventListener("click", () => openTicketThread(el.getAttribute("data-tid"))));
+    }
+    if (activeTicketId && allTickets.some(t => t.id === activeTicketId)) renderTicketChat(activeTicketId);
+    else { document.getElementById("tkt-chat").classList.add("hidden"); document.getElementById("tkt-chat-empty").classList.remove("hidden"); }
+  }
+  function openTicketThread(id) { activeTicketId = id; renderTickets(); renderTicketChat(id); }
+  function renderTicketChat(id) {
+    const t = allTickets.find(x => x.id === id);
+    if (!t) return;
+    document.getElementById("tkt-chat-empty").classList.add("hidden");
+    document.getElementById("tkt-chat").classList.remove("hidden");
+    const canResolve = isStaff;
+    const resolveBtn = canResolve
+      ? `<button id="tkt-resolve" class="text-xs font-semibold px-3 py-1.5 rounded-lg border brd hover:opacity-80" style="color:${t.status==='resolved'?'#f59e0b':'#10b981'}">${t.status==='resolved'?'Reopen':'Mark resolved'}</button>`
+      : "";
+    document.getElementById("tkt-chat-head").innerHTML = `
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <div class="font-bold" style="color:var(--text)">${escapeHtml(t.category||"Ticket")} · <span style="font-weight:500">${escapeHtml(t.priority||"Normal")}</span></div>
+          <div class="text-xs muted2">Order ${escapeHtml(String(t.orderId||""))} · ${escapeHtml(t.nurse||"")} · ${escapeHtml(String(t.client||""))} · ${escapeHtml(t.date||"")} ${escapeHtml(t.time||"")}</div>
+          <div class="text-xs muted2">${escapeHtml(t.homecare||"")}${t.city?" · "+escapeHtml(t.city):""}</div>
+        </div>
+        ${resolveBtn}
+      </div>`;
+    const body = document.getElementById("tkt-chat-body");
+    body.innerHTML = (t.messages||[]).map(m => {
+      const side = m.role === "ops" ? "ops" : "homecare";
+      const who = side === "ops" ? (m.by||"Ops") : (t.homecare || m.by || "Home care");
+      return `<div class="tkt-row ${side}"><div class="tkt-bubble ${side}">${escapeHtml(m.text||"")}</div><div class="tkt-meta">${escapeHtml(who)} · ${escapeHtml(fmtRelative(_tsMs(m.at)))}</div></div>`;
+    }).join("");
+    body.scrollTop = body.scrollHeight;
+    if (canResolve) {
+      const rb = document.getElementById("tkt-resolve");
+      if (rb) rb.addEventListener("click", async () => {
+        try { await updateDoc(doc(db, "tickets", t.id), { status: t.status === "resolved" ? "open" : "resolved", updatedAt: new Date().toISOString() }); }
+        catch (e) { console.error(e); alert("Couldn't update ticket status. If 'permission-denied', publish the tickets rules."); }
+      });
+    }
+  }
+  async function sendTicketReply() {
+    if (!activeTicketId) return;
+    const ta = document.getElementById("tkt-reply");
+    const text = ta.value.trim();
+    if (!text) return;
+    const msg = { by: currentUserEmail || "unknown", role: isStaff ? "ops" : "homecare", text, at: new Date().toISOString() };
+    ta.value = "";
+    try {
+      await updateDoc(doc(db, "tickets", activeTicketId), { messages: arrayUnion(msg), updatedAt: new Date().toISOString(), status: "open" });
+    } catch (e) { console.error(e); alert("Couldn't send reply. If 'permission-denied', publish the tickets rules."); ta.value = text; }
+  }
+  document.getElementById("tkt-send").addEventListener("click", sendTicketReply);
+  document.getElementById("tkt-reply").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTicketReply(); } });
+  document.querySelectorAll("#tkt-filter .tkt-filter-btn").forEach(b => b.addEventListener("click", () => {
+    tktFilter = b.getAttribute("data-tf");
+    document.querySelectorAll("#tkt-filter .tkt-filter-btn").forEach(x => x.setAttribute("data-active", x === b ? "true" : "false"));
+    renderTickets();
+  }));
+
   // ---------- BABYSITTER PROFILES ----------
   function renderProfiles() {
     const all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
@@ -1944,8 +2104,36 @@
     };
     const btn = document.getElementById("ticket-submit");
     btn.disabled = true; btn.textContent = "Sending…";
+    const ticketId = "TKT-" + activeModalBooking.id;   // one thread per booking
+    const nowIso = new Date().toISOString();
+    const firstMsg = { by: currentUserEmail || "unknown", role: isStaff ? "ops" : "homecare", text: msg, at: nowIso };
     try {
-      await fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      // Write/append the ticket thread in Firestore (this is what powers the chat).
+      const ref = doc(db, "tickets", ticketId);
+      const existing = await getDoc(ref);
+      if (existing.exists()) {
+        await updateDoc(ref, {
+          status: "open",
+          priority: payload.priority,
+          category: payload.category,
+          updatedAt: nowIso,
+          messages: arrayUnion(firstMsg)
+        });
+      } else {
+        await setDoc(ref, {
+          ticketId, orderId: String(activeModalBooking.id),
+          category: payload.category, priority: payload.priority, status: "open",
+          nurse: payload.nurse, client: payload.client, clientPhone: payload.clientPhone,
+          date: payload.date, time: payload.time, homecare: payload.homecare, city: payload.city,
+          package: payload.package, mapUrl: payload.mapUrl,
+          createdBy: currentUserEmail || "unknown", createdByRole: isStaff ? "ops" : "homecare",
+          createdAt: nowIso, updatedAt: nowIso,
+          messages: [firstMsg]
+        });
+      }
+      // Notify Slack (fire-and-forget; keeps Slack webhook server-side in n8n).
+      payload.ticketId = ticketId;
+      fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(()=>{});
       document.getElementById("ticket-submit").classList.add("hidden");
       document.getElementById("ticket-success").classList.remove("hidden");
       setTimeout(closeTicket, 1600);
@@ -2029,7 +2217,7 @@
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
   function setView(mode) {
-    if (isHomecare && !["day","week","range"].includes(mode)) mode = "day";  // homecare: calendar only
+    if (isHomecare && !["day","week","range","tickets"].includes(mode)) mode = "day";  // homecare: calendar + tickets only
     viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
@@ -2038,6 +2226,7 @@
   document.getElementById("view-util").addEventListener("click", () => setView("utilisation"));
   document.getElementById("view-compliance").addEventListener("click", () => setView("compliance"));
   document.getElementById("view-revenue").addEventListener("click", () => setView("revenue"));
+  document.getElementById("view-tickets").addEventListener("click", () => setView("tickets"));
   document.getElementById("rev-month").addEventListener("change", () => { if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("rev-rate").addEventListener("change", (e) => { setAgencyRate(parseFloat(e.target.value)); if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
@@ -2343,6 +2532,7 @@
   let appStarted = false;
   function startApp() {
     if (appStarted) return; appStarted = true;
+    startTicketsListener();
 
     // ----- bookings listener -----
     onSnapshot(collection(db, COLLECTION_NAME), { includeMetadataChanges: true }, (snapshot) => {
