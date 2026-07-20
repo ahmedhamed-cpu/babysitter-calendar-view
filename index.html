@@ -91,10 +91,12 @@
   .prof-row.dragging { opacity:.4; }
   .prof-row.drop-before { box-shadow: inset 0 3px 0 0 var(--gold-dark); }
   .prof-row.drop-after  { box-shadow: inset 0 -3px 0 0 var(--gold-dark); }
-  /* role visibility: body.viewer = view-only user */
+  /* role visibility: body.viewer = non-admin. role-admin / role-support / role-homecare */
   .viewer-only { display:none; }
   body.viewer .viewer-only { display:block; }
-  body.viewer .admin-only { display:none !important; }
+  body.viewer .admin-only { display:none !important; }         /* admin-exclusive controls */
+  body.role-homecare .staff-only { display:none !important; }  /* staff-only areas hidden from homecare */
+  body.role-homecare .viewer-only { display:none !important; } /* homecare gets its own minimal UI, not the viewer note */
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
   .kpi .k-label { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); white-space:nowrap; }
   .kpi .k-val { font-size:19px; font-weight:700; line-height:1.1; }
@@ -119,6 +121,10 @@
   .modal-tab[data-active="true"] { background:var(--btn-active-bg); color:var(--btn-active-text); box-shadow:var(--hover-shadow); }
   .modal-tab:not([data-active="true"]):hover { color:var(--text); }
   .mtab-dot { width:7px; height:7px; border-radius:50%; background:#10b981; display:inline-block; }
+  /* ticket priority toggle */
+  .tkt-pri { font-size:13px; font-weight:600; padding:7px 10px; border-radius:9px; border:1px solid var(--border); color:var(--text-2); background:var(--btn-bg); cursor:pointer; transition:all .15s var(--spring); }
+  .tkt-pri[data-active="true"] { background:var(--btn-active-bg); color:var(--btn-active-text); border-color:var(--btn-active-bg); }
+  .tkt-pri[data-pri="Urgent"][data-active="true"] { background:#ef4444; color:#fff; border-color:#ef4444; }
   @keyframes bs-pulse {
     0%   { box-shadow: 0 0 0 0 rgba(52,199,89,.55); }
     70%  { box-shadow: 0 0 0 6px rgba(52,199,89,0); }
@@ -218,7 +224,7 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
-        <div class="flex flex-col items-stretch mr-1">
+        <div class="flex flex-col items-stretch mr-1 staff-only">
           <button id="sync-btn" title="Trigger a fresh sync from Metabase now" class="sync-btn group">
             <span id="sync-dot" class="sync-dot"></span>
             <span id="sync-icon" class="sync-icon">↻</span>
@@ -250,10 +256,10 @@
       <button id="view-day" class="view-btn" data-view="day" data-active="true">Day</button>
       <button id="view-week" class="view-btn" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn" data-view="range" data-active="false">Range</button>
-      <button id="view-util" class="view-btn" data-view="utilisation" data-active="false">Utilisation</button>
-      <button id="view-compliance" class="view-btn" data-view="compliance" data-active="false">Compliance</button>
-      <button id="view-revenue" class="view-btn" data-view="revenue" data-active="false">Revenue</button>
-      <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
+      <button id="view-util" class="view-btn staff-only" data-view="utilisation" data-active="false">Utilisation</button>
+      <button id="view-compliance" class="view-btn staff-only" data-view="compliance" data-active="false">Compliance</button>
+      <button id="view-revenue" class="view-btn staff-only" data-view="revenue" data-active="false">Revenue</button>
+      <button id="view-profiles" class="view-btn staff-only" data-view="profiles" data-active="false">Profiles</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
       <span>From</span><input type="date" id="range-from" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
@@ -261,8 +267,8 @@
     </div>
     <div id="revenue-controls" class="hidden items-center gap-2 text-sm muted">
       <span>Month</span><input type="month" id="rev-month" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
-      <span class="ml-2">Agency rate</span>
-      <div class="flex items-center gap-1"><input type="number" id="rev-rate" min="0" step="0.5" class="icon-input h-9 px-2 rounded-lg border brd text-sm w-20 text-right" /><span>SAR/hr</span></div>
+      <span class="ml-2 admin-only">Agency rate</span>
+      <div class="flex items-center gap-1 admin-only"><input type="number" id="rev-rate" min="0" step="0.5" class="icon-input h-9 px-2 rounded-lg border brd text-sm w-20 text-right" /><span>SAR/hr</span></div>
     </div>
     <input id="search-input" type="text" placeholder="Search customer or nurse&hellip;" class="icon-input h-9 px-3 rounded-lg border brd text-sm w-56" />
     <select id="pkg-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All packages</option></select>
@@ -274,7 +280,7 @@
     </select>
     <select id="hc-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All agencies</option></select>
     <select id="city-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All cities</option></select>
-    <details class="relative">
+    <details class="relative staff-only">
       <summary class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium cursor-pointer flex items-center gap-1">Export &#9662;</summary>
       <div class="absolute z-30 mt-1 right-0 card rounded-lg p-1 w-56">
         <button id="exp-view" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export current view (CSV)</button>
@@ -357,9 +363,9 @@
     <p class="text-sm muted" id="modal-customer-name">&mdash;</p>
 
     <!-- Tab switch: keeps the card compact by showing one section at a time -->
-    <div class="modal-tabs flex gap-1 my-3 p-1 rounded-xl">
+    <div class="modal-tabs flex gap-1 my-3 p-1 rounded-xl staff-only">
       <button id="mtab-status" class="modal-tab flex-1" data-active="true">Status &amp; Contact</button>
-      <button id="mtab-compliance" class="modal-tab flex-1" data-active="false">Compliance <span id="mtab-comp-dot" class="mtab-dot hidden"></span></button>
+      <button id="mtab-compliance" class="modal-tab flex-1 staff-only" data-active="false">Compliance <span id="mtab-comp-dot" class="mtab-dot hidden"></span></button>
     </div>
 
     <!-- ===== PANE 1: STATUS & CONTACT ===== -->
@@ -395,6 +401,7 @@
         <a id="modal-wa-nurse" target="_blank" rel="noopener noreferrer" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128172; WhatsApp nurse</a>
       </div>
       <p id="modal-loc-none" class="hidden text-xs muted2 italic mt-3">No location or contact links available for this booking.</p>
+      <button id="modal-open-ticket" class="w-full mt-3 px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127915; Open a ticket for this booking</button>
       <div id="modal-history" class="mt-4 hidden">
         <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-1">Recent changes</p>
         <div id="modal-history-list" class="text-xs muted space-y-0.5"></div>
@@ -423,6 +430,35 @@
         </div>
         <div class="viewer-only text-sm space-y-1" id="comp-readonly"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- TICKET MODAL -->
+<div id="ticket-modal" class="modal-backdrop hidden">
+  <div class="card rounded-2xl shadow-xl w-[420px] max-w-[92vw] p-5 max-h-[90vh] overflow-y-auto">
+    <div class="flex items-start justify-between mb-1">
+      <h3 class="font-bold text-base">Open a ticket</h3>
+      <button id="ticket-close" class="muted2 hover:opacity-70 text-xl leading-none">&times;</button>
+    </div>
+    <p class="text-sm muted mb-3">Sends this straight to the ops team on Slack — no WhatsApp needed.</p>
+    <div id="ticket-context" class="text-xs muted2 mb-3 p-2 rounded-lg" style="background:var(--surface);border:1px solid var(--border)">&mdash;</div>
+    <label class="block text-xs font-semibold muted2 uppercase tracking-wide mb-1">Scenario</label>
+    <select id="ticket-category" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3"></select>
+    <label class="block text-xs font-semibold muted2 uppercase tracking-wide mb-1">Priority</label>
+    <div id="ticket-priority" class="flex gap-1 mb-3">
+      <button type="button" data-pri="Low" class="tkt-pri flex-1">Low</button>
+      <button type="button" data-pri="Normal" class="tkt-pri flex-1" data-active="true">Normal</button>
+      <button type="button" data-pri="Urgent" class="tkt-pri flex-1">Urgent</button>
+    </div>
+    <label class="block text-xs font-semibold muted2 uppercase tracking-wide mb-1">Details</label>
+    <textarea id="ticket-message" rows="4" placeholder="Describe what's happening…" class="icon-input w-full px-2 py-2 rounded-lg border brd text-sm mb-1"></textarea>
+    <p id="ticket-error" class="hidden text-xs text-rose-500 mb-2"></p>
+    <button id="ticket-submit" class="w-full mt-2 px-3 py-2.5 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Send ticket to ops</button>
+    <div id="ticket-success" class="hidden text-center py-6">
+      <div class="text-3xl mb-2">&#9989;</div>
+      <p class="font-semibold" style="color:var(--text)">Ticket sent</p>
+      <p class="text-sm muted2">The ops team has been notified on Slack.</p>
     </div>
   </div>
 </div>
@@ -460,6 +496,22 @@
     del:        "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-delete",
     compliance: "https://feelvaleo.app.n8n.cloud/webhook/babysitter-sync-compliance"
   };
+  // Ticketing: dashboard POSTs the ticket here; n8n posts it to Slack (keeps the
+  // Slack webhook server-side, out of this page's source).
+  const TICKET_WEBHOOK = "https://feelvaleo.app.n8n.cloud/webhook/babysitter-ticket";
+  // Scenarios homecare partners / ops can raise. Edit freely.
+  const TICKET_CATEGORIES = [
+    "Client not answering / no access",
+    "Address or location issue",
+    "Babysitter running late",
+    "Babysitter no-show / unavailable",
+    "Client requested early end",
+    "Client complaint",
+    "Safety concern",
+    "Schedule change request",
+    "Payment / collection issue",
+    "Other"
+  ];
   // Button is debounced for this many ms after a click, so nobody hammers it.
   const SYNC_COOLDOWN_MS = 45000;
   const AMBIGUOUS_DATE_ORDER = "DMY"; // DD/MM/YYYY default (set "MDY" if month-first)
@@ -916,6 +968,7 @@
   // ---------- STATE ----------
   let allBookings = [];
   let activeModalDocId = null;
+  let activeModalBooking = null;
   let viewMode = "day";
   let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "";
   let engagementMap = {};
@@ -1733,6 +1786,7 @@
   const modal = document.getElementById("status-modal");
   function openModal(booking) {
     activeModalDocId = booking.id; const d = booking.data;
+    activeModalBooking = booking;
     document.getElementById("modal-nurse-name").textContent = displayName(fieldVal(d, FIELD.nurseName) || "Unassigned");
     document.getElementById("modal-customer-name").textContent = fieldVal(d, FIELD.customer) || "Unknown customer";
     document.getElementById("modal-order-id").textContent = booking.id;
@@ -1821,6 +1875,87 @@
   }
   document.getElementById("mtab-status").addEventListener("click", () => switchModalTab("status"));
   document.getElementById("mtab-compliance").addEventListener("click", () => switchModalTab("compliance"));
+
+  // ----- Ticketing -----
+  let ticketPriority = "Normal";
+  const ticketModal = document.getElementById("ticket-modal");
+  function populateTicketCategories() {
+    const sel = document.getElementById("ticket-category");
+    if (sel.options.length) return;
+    sel.innerHTML = TICKET_CATEGORIES.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  }
+  function openTicket() {
+    if (!activeModalBooking) return;
+    const d = activeModalBooking.data;
+    populateTicketCategories();
+    ticketPriority = "Normal";
+    document.querySelectorAll("#ticket-priority .tkt-pri").forEach(b => b.setAttribute("data-active", b.getAttribute("data-pri") === "Normal" ? "true" : "false"));
+    const dt = parseSlotDateTime(d);
+    const ctx = [
+      "Order " + activeModalBooking.id,
+      displayName(fieldVal(d, FIELD.nurseName) || "Unassigned"),
+      fieldVal(d, FIELD.customer) || "",
+      dt ? dateKey(dt) + " " + fmtTime(dt) : "",
+      (homeCareOf(fieldVal(d, FIELD.nurseName)||"") || fieldVal(d, FIELD.homecare) || ""),
+      fieldVal(d, FIELD.city) || ""
+    ].filter(Boolean).join(" · ");
+    document.getElementById("ticket-context").textContent = ctx;
+    document.getElementById("ticket-category").selectedIndex = 0;
+    document.getElementById("ticket-message").value = "";
+    document.getElementById("ticket-error").classList.add("hidden");
+    document.getElementById("ticket-success").classList.add("hidden");
+    document.getElementById("ticket-submit").classList.remove("hidden");
+    document.getElementById("ticket-submit").disabled = false;
+    document.getElementById("ticket-submit").textContent = "Send ticket to ops";
+    ticketModal.classList.remove("hidden");
+  }
+  function closeTicket() { ticketModal.classList.add("hidden"); }
+  document.getElementById("modal-open-ticket").addEventListener("click", openTicket);
+  document.getElementById("ticket-close").addEventListener("click", closeTicket);
+  ticketModal.addEventListener("click", (e) => { if (e.target === ticketModal) closeTicket(); });
+  document.querySelectorAll("#ticket-priority .tkt-pri").forEach(b => b.addEventListener("click", () => {
+    ticketPriority = b.getAttribute("data-pri");
+    document.querySelectorAll("#ticket-priority .tkt-pri").forEach(x => x.setAttribute("data-active", x === b ? "true" : "false"));
+  }));
+  document.getElementById("ticket-submit").addEventListener("click", async () => {
+    const msg = document.getElementById("ticket-message").value.trim();
+    const err = document.getElementById("ticket-error");
+    if (!msg) { err.textContent = "Please describe what's happening."; err.classList.remove("hidden"); return; }
+    if (!activeModalBooking) { err.textContent = "No booking selected."; err.classList.remove("hidden"); return; }
+    err.classList.add("hidden");
+    const d = activeModalBooking.data; const dt = parseSlotDateTime(d);
+    const payload = {
+      orderId: activeModalBooking.id,
+      category: document.getElementById("ticket-category").value,
+      priority: ticketPriority,
+      message: msg,
+      nurse: displayName(fieldVal(d, FIELD.nurseName) || "Unassigned"),
+      client: fieldVal(d, FIELD.customer) || "",
+      clientPhone: String(fieldVal(d, FIELD.customerPhone) || ""),
+      date: dt ? dateKey(dt) : "",
+      time: dt ? fmtTime(dt) : "",
+      homecare: homeCareOf(fieldVal(d, FIELD.nurseName)||"") || fieldVal(d, FIELD.homecare) || "",
+      city: fieldVal(d, FIELD.city) || "",
+      package: fieldVal(d, FIELD.pkg) || "",
+      status: effStatus(d),
+      raisedBy: currentUserEmail || "unknown",
+      raisedAt: new Date().toISOString(),
+      mapUrl: fieldVal(d, ["Map URL","mapUrl"]) || ""
+    };
+    const btn = document.getElementById("ticket-submit");
+    btn.disabled = true; btn.textContent = "Sending…";
+    try {
+      await fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      document.getElementById("ticket-submit").classList.add("hidden");
+      document.getElementById("ticket-success").classList.remove("hidden");
+      setTimeout(closeTicket, 1600);
+    } catch (e) {
+      console.error("Ticket send failed:", e);
+      err.textContent = "Couldn't send the ticket. Please try again or use the usual channel.";
+      err.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Send ticket to ops";
+    }
+  });
   function renderComplianceChecks() {
     const wrap = document.getElementById("comp-checks"); if (!wrap) return;
     wrap.innerHTML = COMPLIANCE_CHECKS.map(c => {
@@ -1893,7 +2028,10 @@
   rangeTo.addEventListener("change", renderGrid);
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
-  function setView(mode) { viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid(); }
+  function setView(mode) {
+    if (isHomecare && !["day","week","range"].includes(mode)) mode = "day";  // homecare: calendar only
+    viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
+  }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
   document.getElementById("view-week").addEventListener("click", () => setView("week"));
   document.getElementById("view-range").addEventListener("click", () => setView("range"));
@@ -2231,6 +2369,11 @@
         // Re-check after compliance backfill in case the status came from the sheet.
         const os2 = String(fieldVal(data, FIELD.orderStatus) || "").trim();
         if (/^cancel/i.test(os2)) return;
+        // Homecare partners only ever load their own agency's bookings.
+        if (isHomecare) {
+          const hc = String(homeCareOf(fieldVal(data, FIELD.nurseName)||"") || fieldVal(data, FIELD.homecare) || "").trim().toLowerCase();
+          if (!currentAgency || hc !== currentAgency.toLowerCase()) return;
+        }
         const rawNurse = fieldVal(data, FIELD.nurseName);
         if (rawNurse != null && rawNurse !== "") data.nurseName = cleanNurseName(rawNurse);
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
@@ -2297,8 +2440,18 @@
   // Admins can mark attendance/status and edit profiles. Everyone else is view-only
   // (can browse all views and export, but cannot write). Enforced for real by the
   // Firestore security rules; this just shapes the UI.
-  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com"];
-  let isAdmin = false;
+  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com", "nilesh.pandaya@feelvaleo.com"];
+  // Homecare partner logins → the agency whose bookings they may see.
+  const HOMECARE_AGENCY = { "giovannivillar0522@gmail.com": "Helpful Agency" };
+  function roleOf(email) {
+    const e = (email || "").toLowerCase().trim();
+    if (ADMIN_EMAILS.includes(e)) return "admin";
+    if (e.endsWith("@feelvaleo.com")) return "support";
+    return "homecare";
+  }
+  let currentRole = "homecare";
+  let currentAgency = "";
+  let isAdmin = false, isStaff = false, isHomecare = false;
   let currentUserEmail = "";
 
   const loginOverlay = document.getElementById("login-overlay");
@@ -2355,13 +2508,27 @@
 
   onAuthStateChanged(auth, (user) => {
     if (user) {
-      isAdmin = ADMIN_EMAILS.includes((user.email || "").toLowerCase());
       currentUserEmail = user.email || "";
-      document.body.classList.toggle("viewer", !isAdmin);
+      currentRole = roleOf(currentUserEmail);
+      isAdmin  = currentRole === "admin";
+      isStaff  = currentRole === "admin" || currentRole === "support";
+      isHomecare = currentRole === "homecare";
+      currentAgency = isHomecare ? (HOMECARE_AGENCY[currentUserEmail.toLowerCase()] || "") : "";
+      document.body.classList.remove("role-admin", "role-support", "role-homecare", "viewer");
+      document.body.classList.add("role-" + currentRole);
+      if (!isAdmin) document.body.classList.add("viewer");   // .admin-only stays admin-exclusive
       loginOverlay.classList.add("hidden");
       const so = document.getElementById("signout-btn");
       so.classList.remove("hidden");
-      so.title = "Sign out (" + (user.email || "") + (isAdmin ? " · admin" : " · view-only") + ")";
+      const roleLabel = isAdmin ? "admin" : (isStaff ? "support" : ("homecare" + (currentAgency ? " · " + currentAgency : "")));
+      so.title = "Sign out (" + (user.email || "") + " · " + roleLabel + ")";
+      if (isHomecare && !currentAgency) {
+        // A non-staff email with no agency mapping: deny rather than leak all data.
+        loginError.textContent = "This account isn't linked to a home care partner yet. Please contact Valeo ops.";
+        loginError.classList.remove("hidden");
+        signOut(auth).catch(()=>{});
+        return;
+      }
       startApp();
     } else {
       loginOverlay.classList.remove("hidden");
