@@ -512,7 +512,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, arrayUnion, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, arrayUnion, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -1717,7 +1717,10 @@
   const tktMs = t => _tsMs(t && (t.updatedAt || t.createdAt));
 
   function startTicketsListener() {
-    onSnapshot(collection(db, "tickets"), (snap) => {
+    const src = isHomecare
+      ? query(collection(db, "tickets"), where("homecare", "==", currentAgency))
+      : collection(db, "tickets");
+    onSnapshot(src, (snap) => {
       const out = [];
       snap.forEach(rec => {
         const d = rec.data();
@@ -2542,7 +2545,13 @@
     startTicketsListener();
 
     // ----- bookings listener -----
-    onSnapshot(collection(db, COLLECTION_NAME), { includeMetadataChanges: true }, (snapshot) => {
+    // Firestore rules are NOT filters: a collection read is denied outright if the
+    // rules don't permit EVERY matched doc. So homecare must QUERY only their agency's
+    // bookings; staff read the whole collection.
+    const bookingsSource = isHomecare
+      ? query(collection(db, COLLECTION_NAME), where("homecare", "==", currentAgency))
+      : collection(db, COLLECTION_NAME);
+    onSnapshot(bookingsSource, { includeMetadataChanges: true }, (snapshot) => {
       const seen = new Set(), out = [];
       snapshot.forEach(rec => {
         const data = rec.data();
@@ -2621,7 +2630,10 @@
     });
 
     // ----- babysitter roster listener -----
-    onSnapshot(collection(db, "babysitters"), (snap) => {
+    const rosterSource = isHomecare
+      ? query(collection(db, "babysitters"), where("agency", "==", currentAgency))
+      : collection(db, "babysitters");
+    onSnapshot(rosterSource, (snap) => {
       const m = {};
       snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false, order: typeof x.order === "number" ? x.order : undefined }; });
       babysitterDocs = m;
