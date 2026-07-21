@@ -1820,7 +1820,10 @@
     const msg = { by: currentUserEmail || "unknown", role: isStaff ? "ops" : "homecare", text, at: new Date().toISOString() };
     ta.value = "";
     try {
-      await updateDoc(doc(db, "tickets", activeTicketId), { messages: arrayUnion(msg), updatedAt: new Date().toISOString(), status: "open" });
+      const upd = { messages: arrayUnion(msg), updatedAt: new Date().toISOString() };
+      if (isStaff) { upd.status = "open"; }                                  // staff may reopen on reply
+      else if (currentAgency) { upd.homecare = currentAgency; }              // homecare: normalize agency, no status change
+      await updateDoc(doc(db, "tickets", activeTicketId), upd);
     } catch (e) { console.error(e); alert("Couldn't send reply. If 'permission-denied', publish the tickets rules."); ta.value = text; }
   }
   document.getElementById("tkt-send").addEventListener("click", sendTicketReply);
@@ -2128,13 +2131,10 @@
       const ref = doc(db, "tickets", ticketId);
       const existing = await getDoc(ref);
       if (existing.exists()) {
-        await updateDoc(ref, {
-          status: "open",
-          priority: payload.priority,
-          category: payload.category,
-          updatedAt: nowIso,
-          messages: arrayUnion(firstMsg)
-        });
+        const upd = { updatedAt: nowIso, messages: arrayUnion(firstMsg) };
+        if (isStaff) { upd.status = "open"; upd.priority = payload.priority; upd.category = payload.category; }
+        else { upd.homecare = ticketHomecare; }   // homecare: normalize agency, never touch status
+        await updateDoc(ref, upd);
       } else {
         await setDoc(ref, {
           ticketId, orderId: String(activeModalBooking.id),
