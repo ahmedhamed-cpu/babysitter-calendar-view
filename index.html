@@ -251,6 +251,7 @@
         <button id="today-btn" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium">Today</button>
         <div id="order-count" class="h-9 px-3 rounded-lg flex items-center text-sm font-semibold" style="background:var(--gold-soft); border:1px solid var(--gold-soft-bd)">0 orders</div>
         <button id="theme-toggle" title="Toggle dark / light" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center text-base">🌙</button>
+        <button id="whoami-btn" title="Show my role & claims" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center text-base">&#128100;</button>
         <button id="signout-btn" title="Sign out" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium hidden">Sign out</button>
       </div>
     </div>
@@ -273,7 +274,7 @@
       <button id="view-compliance" class="view-btn staff-only" data-view="compliance" data-active="false">Compliance</button>
       <button id="view-revenue" class="view-btn staff-only" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
-      <button id="view-profiles" class="view-btn staff-only" data-view="profiles" data-active="false">Profiles</button>
+      <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
       <span>From</span><input type="date" id="range-from" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
@@ -292,7 +293,7 @@
       <option value="Weekly">Weekly</option>
       <option value="Daily">Daily</option>
     </select>
-    <select id="hc-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All agencies</option></select>
+    <select id="hc-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm staff-only"><option value="">All agencies</option></select>
     <select id="city-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All cities</option></select>
     <details class="relative staff-only">
       <summary class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium cursor-pointer flex items-center gap-1">Export &#9662;</summary>
@@ -1829,7 +1830,9 @@
 
   // ---------- BABYSITTER PROFILES ----------
   function renderProfiles() {
-    const all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
+    let all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
+    // Homecare partners only see (and manage) their own agency's babysitters.
+    if (isHomecare) all = all.filter(u => (u.agency || "").toLowerCase() === (currentAgency || "").toLowerCase());
     const q = searchText;
     const list = all.filter(u => !q || (u.name + " " + (u.agency||"") + " " + (u.city||"")).toLowerCase().includes(q));
     const activeCount = all.filter(u => u.active).length;
@@ -1871,7 +1874,7 @@
             <div class="text-[11px] muted2 truncate">${u.schedule?escapeHtml(u.schedule):"—"}</div></div>
           <div class="flex items-center gap-1.5 shrink-0">${currentBadge}${iqamaBadge}</div>
           <span class="text-xs font-medium shrink-0 ${u.active?"text-emerald-600":"muted2"}">${u.active?"Active":"Inactive"}</span>
-          ${isAdmin ? `<div class="switch" draggable="false" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>` : ""}
+          ${(isAdmin || isHomecare) ? `<div class="switch" draggable="false" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>` : ""}
         </div>`;
       });
       html += `</div></div>`;
@@ -1879,10 +1882,14 @@
     document.getElementById("profiles-list").innerHTML = html || `<div class="text-center py-12 muted2 text-sm">No babysitters match.</div>`;
     document.getElementById("profiles-note").innerHTML = isAdmin
       ? `Drag the &#8942; handle to reorder babysitters within an agency — the order is saved and shared. ${searchText?"<b>Reordering is paused while searching</b> — clear the search box to drag. ":""}Toggle a babysitter off to hide her (and her bookings) from every operational view; she stays in the data. Saved to the Firestore <b>babysitters</b> collection.`
-      : `View-only access — you can see every babysitter's profile, but editing, reordering, and on/off toggles are limited to admins.`;
+      : (isHomecare
+        ? `Toggle your babysitters on/off — turning one off hides her and her bookings from the calendar. Reordering is admin-only.`
+        : `View-only access — you can see every babysitter's profile, but editing, reordering, and on/off toggles are limited to admins.`);
 
     document.querySelectorAll("#profiles-list .switch").forEach(sw => sw.addEventListener("click", async () => {
-      if (!isAdmin) return;
+      if (!isAdmin && !isHomecare) return;
+      // Homecare may only toggle their own agency's babysitters.
+      if (isHomecare && (sw.getAttribute("data-agency")||"").toLowerCase() !== (currentAgency||"").toLowerCase()) return;
       const next = sw.getAttribute("data-on") !== "true";
       sw.setAttribute("data-on", String(next)); // optimistic
       try {
@@ -1891,7 +1898,7 @@
       } catch (err) {
         console.error("Failed to save profile:", err);
         sw.setAttribute("data-on", String(!next));
-        alert("Could not save the on/off state.\nIf this says 'permission-denied', add Firestore rules for the 'babysitters' collection (see the rules I provided).");
+        alert("Could not save the on/off state.\nIf this says 'permission-denied', the Firestore rules need to allow this write.");
       }
     }));
 
@@ -2217,7 +2224,7 @@
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
   function setView(mode) {
-    if (isHomecare && !["day","week","range","tickets"].includes(mode)) mode = "day";  // homecare: calendar + tickets only
+    if (isHomecare && !["day","week","range","tickets","profiles"].includes(mode)) mode = "day";  // homecare: calendar, tickets, profiles(own agency)
     viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
@@ -2695,6 +2702,29 @@
     }
   });
   document.getElementById("signout-btn").addEventListener("click", async () => { try { await signOut(auth); } catch (e) {} location.reload(); });
+  document.getElementById("whoami-btn").addEventListener("click", async () => {
+    const u = auth.currentUser;
+    if (!u) { alert("Not signed in."); return; }
+    try {
+      const res = await u.getIdTokenResult(true);   // force refresh so newly-set claims show
+      const c = res.claims || {};
+      const lines = [
+        "Signed in as: " + (u.email || "(no email)"),
+        "Dashboard role: " + currentRole + (currentAgency ? " · " + currentAgency : ""),
+        "",
+        "Token claims Firestore rules will see:",
+        "  role:   " + (c.role   !== undefined ? c.role   : "(none)"),
+        "  agency: " + (c.agency !== undefined ? c.agency : "(none)"),
+        "  email:  " + (c.email  !== undefined ? c.email  : "(none)"),
+        "",
+        (c.agency ? "✓ Agency claim is set — safe to publish the scoped rules." :
+         (u.email && u.email.toLowerCase().endsWith("@feelvaleo.com") ? "Staff account — no agency claim needed." :
+          "⚠ No agency claim yet. Run the Cloud Shell script and sign out/in before publishing scoped rules."))
+      ];
+      alert(lines.join("\n"));
+      console.log("[whoami] full claims:", c);
+    } catch (e) { alert("Couldn't read claims: " + e.message); }
+  });
 
   onAuthStateChanged(auth, (user) => {
     if (user) {
