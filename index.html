@@ -2129,23 +2129,25 @@
     try {
       // Write/append the ticket thread in Firestore (this is what powers the chat).
       const ref = doc(db, "tickets", ticketId);
-      const existing = await getDoc(ref);
-      if (existing.exists()) {
-        const upd = { updatedAt: nowIso, messages: arrayUnion(firstMsg) };
-        if (isStaff) { upd.status = "open"; upd.priority = payload.priority; upd.category = payload.category; }
-        else { upd.homecare = ticketHomecare; }   // homecare: normalize agency, never touch status
-        await updateDoc(ref, upd);
-      } else {
-        await setDoc(ref, {
-          ticketId, orderId: String(activeModalBooking.id),
-          category: payload.category, priority: payload.priority, status: "open",
-          nurse: payload.nurse, client: payload.client, clientPhone: payload.clientPhone,
-          date: payload.date, time: payload.time, homecare: ticketHomecare, city: payload.city,
-          package: payload.package, mapUrl: payload.mapUrl,
-          createdBy: currentUserEmail || "unknown", createdByRole: isStaff ? "ops" : "homecare",
-          createdAt: nowIso, updatedAt: nowIso,
-          messages: [firstMsg]
-        });
+      const ref = doc(db, "tickets", ticketId);
+const existing = await getDoc(ref);
+if (existing.exists()) {
+  const upd = { updatedAt: nowIso, messages: arrayUnion(firstMsg) };
+  if (isStaff) { upd.status = "open"; upd.priority = payload.priority; upd.category = payload.category; }
+  else { upd.homecare = ticketHomecare; }
+  await updateDoc(ref, upd);
+} else {
+  await setDoc(ref, {
+    ticketId, orderId: String(activeModalBooking.id),
+    category: payload.category, priority: payload.priority, status: "open",
+    nurse: payload.nurse, client: payload.client, clientPhone: payload.clientPhone,
+    date: payload.date, time: payload.time, homecare: ticketHomecare, city: payload.city,
+    package: payload.package, mapUrl: payload.mapUrl,
+    createdBy: currentUserEmail || "unknown", createdByRole: isStaff ? "ops" : "homecare",
+    createdAt: nowIso, updatedAt: nowIso,
+    messages: [firstMsg]
+  });
+}
       }
       // Notify Slack (fire-and-forget; keeps Slack webhook server-side in n8n).
       payload.ticketId = ticketId;
