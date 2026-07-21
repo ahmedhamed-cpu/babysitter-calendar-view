@@ -1895,9 +1895,11 @@
       if (isHomecare && (sw.getAttribute("data-agency")||"").toLowerCase() !== (currentAgency||"").toLowerCase()) return;
       const next = sw.getAttribute("data-on") !== "true";
       sw.setAttribute("data-on", String(next)); // optimistic
+      // Homecare must write their canonical claim agency so the rule matches.
+      const writeAgency = isHomecare && currentAgency ? currentAgency : sw.getAttribute("data-agency");
       try {
         await setDoc(doc(db, "babysitters", sw.getAttribute("data-slug")),
-          { name: sw.getAttribute("data-name"), agency: sw.getAttribute("data-agency"), city: sw.getAttribute("data-city"), active: next }, { merge: true });
+          { name: sw.getAttribute("data-name"), agency: writeAgency, city: sw.getAttribute("data-city"), active: next }, { merge: true });
       } catch (err) {
         console.error("Failed to save profile:", err);
         sw.setAttribute("data-on", String(!next));
@@ -2116,6 +2118,10 @@
     btn.disabled = true; btn.textContent = "Sending…";
     const ticketId = "TKT-" + activeModalBooking.id;   // one thread per booking
     const nowIso = new Date().toISOString();
+    // For homecare users, stamp the ticket's homecare with their CLAIM agency (the
+    // canonical value the rules compare against) rather than the booking's possibly
+    // differently-cased home care field. Staff use the booking's value.
+    const ticketHomecare = isHomecare && currentAgency ? currentAgency : payload.homecare;
     const firstMsg = { by: currentUserEmail || "unknown", role: isStaff ? "ops" : "homecare", text: msg, at: nowIso };
     try {
       // Write/append the ticket thread in Firestore (this is what powers the chat).
@@ -2134,7 +2140,7 @@
           ticketId, orderId: String(activeModalBooking.id),
           category: payload.category, priority: payload.priority, status: "open",
           nurse: payload.nurse, client: payload.client, clientPhone: payload.clientPhone,
-          date: payload.date, time: payload.time, homecare: payload.homecare, city: payload.city,
+          date: payload.date, time: payload.time, homecare: ticketHomecare, city: payload.city,
           package: payload.package, mapUrl: payload.mapUrl,
           createdBy: currentUserEmail || "unknown", createdByRole: isStaff ? "ops" : "homecare",
           createdAt: nowIso, updatedAt: nowIso,
