@@ -2150,7 +2150,12 @@
       }
       // Notify Slack (fire-and-forget; keeps Slack webhook server-side in n8n).
       payload.ticketId = ticketId;
-      fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(()=>{});
+      fetch(TICKET_WEBHOOK, {
+  method: "POST",
+  mode: "no-cors",
+  headers: { "Content-Type": "text/plain;charset=UTF-8" },
+  body: JSON.stringify(payload)
+}).catch(()=>{});
       document.getElementById("ticket-submit").classList.add("hidden");
       document.getElementById("ticket-success").classList.remove("hidden");
       setTimeout(closeTicket, 1600);
