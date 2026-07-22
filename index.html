@@ -1794,6 +1794,7 @@
           <div class="font-bold" style="color:var(--text)">${escapeHtml(t.category||"Ticket")} · <span style="font-weight:500">${escapeHtml(t.priority||"Normal")}</span></div>
           <div class="text-xs muted2">Order ${escapeHtml(String(t.orderId||""))} · ${escapeHtml(t.nurse||"")} · ${escapeHtml(String(t.client||""))} · ${escapeHtml(t.date||"")} ${escapeHtml(t.time||"")}</div>
           <div class="text-xs muted2">${escapeHtml(t.homecare||"")}${t.city?" · "+escapeHtml(t.city):""}</div>
+          ${t.statusChangedBy ? `<div class="text-xs muted2">${t.status==='resolved'?'Resolved':'Reopened'} by ${escapeHtml(t.statusChangedBy)} · ${escapeHtml(fmtRelative(_tsMs(t.statusChangedAt)))}</div>` : ""}
         </div>
         ${resolveBtn}
       </div>`;
@@ -1804,10 +1805,16 @@
       return `<div class="tkt-row ${side}"><div class="tkt-bubble ${side}">${escapeHtml(m.text||"")}</div><div class="tkt-meta">${escapeHtml(who)} · ${escapeHtml(fmtRelative(_tsMs(m.at)))}</div></div>`;
     }).join("");
     body.scrollTop = body.scrollHeight;
-    if (canResolve) {
+   if (canResolve) {
       const rb = document.getElementById("tkt-resolve");
       if (rb) rb.addEventListener("click", async () => {
-        try { await updateDoc(doc(db, "tickets", t.id), { status: t.status === "resolved" ? "open" : "resolved", updatedAt: new Date().toISOString() }); }
+        const next = t.status === "resolved" ? "open" : "resolved";
+        const at = new Date().toISOString();
+        try { await updateDoc(doc(db, "tickets", t.id), {
+          status: next, updatedAt: at,
+          statusChangedBy: currentUserEmail, statusChangedAt: at,
+          statusLog: arrayUnion({ status: next, by: currentUserEmail, at })
+        }); }
         catch (e) { console.error(e); alert("Couldn't update ticket status. If 'permission-denied', publish the tickets rules."); }
       });
     }
@@ -1965,10 +1972,15 @@
     document.getElementById("modal-nurse-name").textContent = displayName(fieldVal(d, FIELD.nurseName) || "Unassigned");
     document.getElementById("modal-customer-name").textContent = fieldVal(d, FIELD.customer) || "Unknown customer";
     document.getElementById("modal-order-id").textContent = booking.id;
-    // Customer phone (tap to call)
-    { const cp = fieldVal(d, FIELD.customerPhone); const el = document.getElementById("modal-customer-phone");
-      const link = telLink(cp);
-      if (link) { el.textContent = String(cp).trim(); el.href = link; } else { el.textContent = "—"; el.removeAttribute("href"); } }
+  // Customer phone — staff only, fetched on demand from the private subcollection.
+    // Homecare never receives it (Firestore rules deny the read), so it stays "—".
+    { const el = document.getElementById("modal-customer-phone");
+      el.textContent = "—"; el.removeAttribute("href");
+      if (isStaff) {
+        getDoc(doc(db, COLLECTION_NAME, booking.id, "private", "contact"))
+          .then(s => { const cp = s.exists() ? (s.data().clientPhone || "") : ""; const link = telLink(cp);
+            if (link) { el.textContent = String(cp).trim(); el.href = link; } })
+          .catch(() => {}); } }
     const dt = parseSlotDateTime(d); const dur = durationMin(d);
     document.getElementById("modal-time").textContent = dt ? (fmtTime(dt)+"–"+fmtTime(new Date(dt.getTime()+dur*60000))) : "—";
     document.getElementById("modal-duration").textContent = fmtHours(dur);
@@ -2106,7 +2118,7 @@
       message: msg,
       nurse: displayName(fieldVal(d, FIELD.nurseName) || "Unassigned"),
       client: fieldVal(d, FIELD.customer) || "",
-      clientPhone: String(fieldVal(d, FIELD.customerPhone) || ""),
+      clientPhone: isStaff ? String(fieldVal(d, FIELD.customerPhone) || "") : "",
       date: dt ? dateKey(dt) : "",
       time: dt ? fmtTime(dt) : "",
       homecare: homeCareOf(fieldVal(d, FIELD.nurseName)||"") || fieldVal(d, FIELD.homecare) || "",
@@ -2119,7 +2131,7 @@
     };
     const btn = document.getElementById("ticket-submit");
     btn.disabled = true; btn.textContent = "Sending…";
-    const ticketId = "TKT-" + activeModalBooking.id;   // one thread per booking
+    const ticketId = "TKT-" + activeModalBooking.id + "-" + Date.now().toString(36);  // unique per ticket
     const nowIso = new Date().toISOString();
     // For homecare users, stamp the ticket's homecare with their CLAIM agency (the
     // canonical value the rules compare against) rather than the booking's possibly
@@ -2127,25 +2139,19 @@
     const ticketHomecare = isHomecare && currentAgency ? currentAgency : payload.homecare;
     const firstMsg = { by: currentUserEmail || "unknown", role: isStaff ? "ops" : "homecare", text: msg, at: nowIso };
     try {
-      // Write/append the ticket thread in Firestore (this is what powers the chat).
-      const ref = doc(db, "tickets", ticketId);
-      const existing = await getDoc(ref);
-      if (existing.exists()) {
-        const upd = { updatedAt: nowIso, messages: arrayUnion(firstMsg) };
-        if (isStaff) { upd.status = "open"; upd.priority = payload.priority; upd.category = payload.category; }
-        else { upd.homecare = ticketHomecare; }   // homecare: normalize agency, never touch status
-        await updateDoc(ref, upd);
-      } else {
-        await setDoc(ref, {
-          ticketId, orderId: String(activeModalBooking.id),
-          category: payload.category, priority: payload.priority, status: "open",
-          nurse: payload.nurse, client: payload.client, clientPhone: payload.clientPhone,
-          date: payload.date, time: payload.time, homecare: ticketHomecare, city: payload.city,
-          package: payload.package, mapUrl: payload.mapUrl,
-          createdBy: currentUserEmail || "unknown", createdByRole: isStaff ? "ops" : "homecare",
-          createdAt: nowIso, updatedAt: nowIso,
-          messages: [firstMsg]
-        });
+        // Every ticket is its own document (multiple tickets per booking allowed).
+      // Grouped by orderId. Phone is NEVER stored in the ticket doc — Slack gets it
+      // server-side via the webhook payload only.
+      await setDoc(doc(db, "tickets", ticketId), {
+        ticketId, orderId: String(activeModalBooking.id),
+        category: payload.category, priority: payload.priority, status: "open",
+        nurse: payload.nurse, client: payload.client, clientPhone: "",
+        date: payload.date, time: payload.time, homecare: ticketHomecare, city: payload.city,
+        package: payload.package, mapUrl: payload.mapUrl,
+        createdBy: currentUserEmail || "unknown", createdByRole: isStaff ? "ops" : "homecare",
+        createdAt: nowIso, updatedAt: nowIso,
+        messages: [firstMsg]
+      });
       }
       // Notify Slack (fire-and-forget; keeps Slack webhook server-side in n8n).
       payload.ticketId = ticketId;
