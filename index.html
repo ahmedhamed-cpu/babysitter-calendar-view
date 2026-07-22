@@ -2152,7 +2152,6 @@
         createdAt: nowIso, updatedAt: nowIso,
         messages: [firstMsg]
       });
-      }
       // Notify Slack (fire-and-forget; keeps Slack webhook server-side in n8n).
       payload.ticketId = ticketId;
      fetch(TICKET_WEBHOOK, {
