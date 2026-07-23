@@ -235,6 +235,18 @@
           <h1 class="text-lg md:text-xl font-bold leading-tight">Babysitter Schedule</h1>
           <p class="text-xs muted2 mt-0.5" id="subtitle">Live operational view</p>
         </div>
+         <div class="flex items-center gap-2 mr-1 staff-only">
+          <div class="view-tabs inline-flex items-center gap-1">
+            <button id="cat-babysitting" class="view-btn" data-cat="babysitting" data-active="true">Babysitting</button>
+            <button id="cat-medical" class="view-btn" data-cat="medical" data-active="false">Medical</button>
+          </div>
+          <select id="cat-sub" class="icon-input h-9 px-3 rounded-lg border brd text-sm hidden">
+            <option value="">All medical</option>
+            <option value="Blood_Package">Blood test</option>
+            <option value="Physio">Physio</option>
+            <option value="IV">IV</option>
+          </select>
+        </div>
       </div>
       <div class="flex items-center gap-2">
         <div class="flex flex-col items-stretch mr-1 staff-only">
@@ -607,6 +619,20 @@
     ].map(r => ({ ...r, agency:"Helpful agency", city:"Riyadh" })),
     ...["Evangeline Allera Ocampo","Jean Montesilio","Lorena B. Abog","Mary Kaye","Marcelyn Matayao","Rosario Gajardo","Veronica Fidalgo"].map(n => ({ name:n, agency:"Tamaam homecare", city:"" }))
   ];
+   // Category grouping keyed off the Metabase "Package Type 2" column.
+  const PKG_TYPE2 = ["Package Type 2","PackageType2","Package_Type_2","packageType2"];
+  const BABYSITTING_CATS = new Set(["Babysitter", "Elderly Care"]);
+  const MEDICAL_CATS = new Set(["Blood_Package", "Physio", "IV"]);
+  const categoryOf = d => String(fieldVal(d, PKG_TYPE2) || "").trim();
+  function passCategory(d) {
+    const c = categoryOf(d);
+    // Homecare can ONLY ever see babysitting/elderly — never medical, regardless of UI.
+    if (isHomecare) return BABYSITTING_CATS.has(c);
+    if (catMajor === "babysitting") return BABYSITTING_CATS.has(c);
+    // medical major: optional sub-filter narrows to one type
+    if (!MEDICAL_CATS.has(c)) return false;
+    return catSub ? c === catSub : true;
+  }
   const slug = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const rosterMap = {}; ROSTER.forEach(r => { rosterMap[slug(r.name)] = r; });
 
@@ -1013,6 +1039,7 @@
   let activeModalBooking = null;
   let viewMode = "day";
   let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "";
+  let catMajor = "babysitting", catSub = "";   // staff category filter; homecare forced to babysitting
   let engagementMap = {};
   let nurseMeta = {};                 // nurse -> { homecare }
   let bsUniverse = {};                // idKey -> { slug, name, agency, city, iqama, schedule, active, order }
@@ -1104,6 +1131,7 @@
   // ---------- FILTERS ----------
   function passNonStatus(b) {
     const d = b.data;
+    if (!passCategory(d)) return false;   // category filter + homecare hard lock
     const nurse = fieldVal(d, FIELD.nurseName) || "";
     if (!isActive(nurse)) return false; // deactivated babysitters hidden
     if (pkgFilter && String(fieldVal(d, FIELD.pkg) || "") !== pkgFilter) return false;
@@ -2262,7 +2290,19 @@
   document.getElementById("eng-filter").addEventListener("change", e => { engFilter = e.target.value; renderGrid(); });
   document.getElementById("hc-filter").addEventListener("change", e => { hcFilter = e.target.value; renderGrid(); });
   document.getElementById("city-filter").addEventListener("change", e => { cityFilter = e.target.value; renderGrid(); });
-
+  document.getElementById("cat-babysitting").addEventListener("click", () => setCategory("babysitting"));
+  document.getElementById("cat-medical").addEventListener("click", () => setCategory("medical"));
+  document.getElementById("cat-sub").addEventListener("change", e => { catSub = e.target.value; renderGrid(); });
+  function setCategory(major) {
+    catMajor = major;
+    if (major === "babysitting") catSub = "";
+    document.getElementById("cat-babysitting").setAttribute("data-active", major === "babysitting" ? "true" : "false");
+    document.getElementById("cat-medical").setAttribute("data-active", major === "medical" ? "true" : "false");
+    const sub = document.getElementById("cat-sub");
+    sub.classList.toggle("hidden", major !== "medical");
+    if (major !== "medical") sub.value = "";
+    renderGrid();
+  }
   function closeMenus() { document.querySelectorAll("details").forEach(d => d.removeAttribute("open")); }
   document.getElementById("exp-view").addEventListener("click", () => { closeMenus(); exportViewCSV(); });
   document.getElementById("exp-exceptions").addEventListener("click", () => { closeMenus(); exportExceptionsCSV(); });
