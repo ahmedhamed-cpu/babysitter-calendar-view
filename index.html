@@ -2600,17 +2600,17 @@
     if (appStarted) return; appStarted = true;
     startTicketsListener();
 
-    // ----- bookings listener -----
-    // Firestore rules are NOT filters: a collection read is denied outright if the
-    // rules don't permit EVERY matched doc. So homecare must QUERY only their agency's
-    // bookings; staff read the whole collection.
+       // Rolling window: 60 days back, 30 forward — the live calendar only streams this range.
+    // Older/further bookings are fetched on demand by Revenue/Utilisation/Compliance.
+    const _lo = new Date(Date.now() + TZ_OFFSET_MS); _lo.setUTCDate(_lo.getUTCDate() - 60);
+    const _hi = new Date(Date.now() + TZ_OFFSET_MS); _hi.setUTCDate(_hi.getUTCDate() + 30);
+    const winLo = dateKey(_lo), winHi = dateKey(_hi);
     const bookingsSource = isHomecare
-      ? query(collection(db, COLLECTION_NAME), where("homecare", "==", currentAgency))
-      : collection(db, COLLECTION_NAME);
-    onSnapshot(bookingsSource, { includeMetadataChanges: true }, (snapshot) => {
-      const seen = new Set(), out = [];
-      snapshot.forEach(rec => {
-        const data = rec.data();
+      ? query(collection(db, COLLECTION_NAME),
+          where("homecare", "==", currentAgency),
+          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi))
+      : query(collection(db, COLLECTION_NAME),
+          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi));
         // HARD EXCLUDE cancelled orders everywhere. The n8n delete workflow removes
         // cancelled docs from Firestore, but there can be a lag (recency window /
         // hourly schedule). This makes the dashboard instantly accurate: any order
