@@ -524,7 +524,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, arrayUnion, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, arrayUnion, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -1034,6 +1034,7 @@
   }
 
   // ---------- STATE ----------
+  let periodBookings = [];   // on-demand fetched set for Revenue/Util/Compliance
   let allBookings = [];
   let activeModalDocId = null;
   let activeModalBooking = null;
@@ -1127,7 +1128,14 @@
     });
     return out;
   }
-
+function setTabLoading(containerId, on) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    let ov = el.querySelector(".tab-loading");
+    if (on) {
+      if (!ov) { ov = document.createElement("div"); ov.className = "tab-loading text-center py-16 muted2 text-sm"; ov.textContent = "Loading period…"; el.prepend(ov); }
+    } else if (ov) ov.remove();
+  }
   // ---------- FILTERS ----------
   function passNonStatus(b) {
     const d = b.data;
@@ -1295,7 +1303,31 @@
     populateSelect("hc-filter", ags, "All agencies");
     populateSelect("city-filter", cities, "All cities");
   }
-
+  // ---------- ON-DEMAND PERIOD FETCH (for Revenue / Utilisation / Compliance) ----------
+  // The live listener only holds a 90-day window. These tabs aggregate over an
+  // arbitrary period, so they fetch exactly their period once and cache it.
+  const periodCache = new Map();   // "loKey|hiKey|role|agency" -> array of {id,data}
+  async function fetchPeriod(loKey, hiKey) {
+    const cacheKey = `${loKey}|${hiKey}|${currentRole}|${currentAgency}`;
+    if (periodCache.has(cacheKey)) return periodCache.get(cacheKey);
+    const src = isHomecare
+      ? query(collection(db, COLLECTION_NAME),
+          where("homecare", "==", currentAgency),
+          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey))
+      : query(collection(db, COLLECTION_NAME),
+          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey));
+    const snap = await getDocs(src);
+    const out = [];
+    snap.forEach(rec => {
+      const data = rec.data();
+      const os = String(fieldVal(data, FIELD.orderStatus) || "").trim();
+      if (/^cancel/i.test(os)) return;                 // same cancelled exclusion as live
+      if (data.nurseName) data.nurseName = cleanNurseName(data.nurseName);
+      out.push({ id: rec.id, data });
+    });
+    periodCache.set(cacheKey, out);
+    return out;
+  }
   // ---------- DISPATCH ----------
   function renderGrid() {
     const refDk = viewMode === "day" ? datePicker.value : (viewMode === "week" ? (currentDayKeys()[0] || todayStr()) : (rangeFrom.value || todayStr()));
@@ -1311,7 +1343,15 @@
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
-    if (viewMode === "revenue") { show("revenue-container"); document.getElementById("empty-state").classList.add("hidden"); renderRevenue(); return; }
+       if (viewMode === "revenue") {
+      show("revenue-container"); document.getElementById("empty-state").classList.add("hidden");
+      const mk = document.getElementById("rev-month").value || monthKeyOf(nowR());
+      const lo = mk + "-01";
+      const hiD = new Date(Date.UTC(+mk.slice(0,4), +mk.slice(5,7), 0)); const hi = dateKey(hiD);
+      setTabLoading("revenue-container", true);
+      fetchPeriod(lo, hi).then(rows => { periodBookings = rows; setTabLoading("revenue-container", false); renderRevenue(); });
+      return;
+    }
     if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
 
     const scope = scopeNonStatus();
@@ -1319,8 +1359,16 @@
     const visible = scope.filter(passStatus);
 
     if (viewMode === "day") { show("day-container"); renderDay(visible); }
-    else if (viewMode === "utilisation") { show("util-container"); document.getElementById("empty-state").classList.add("hidden"); renderUtil(visible); }
-    else if (viewMode === "compliance") { show("compliance-container"); document.getElementById("empty-state").classList.add("hidden"); renderCompliance(visible); }
+   else if (viewMode === "utilisation") {
+      show("util-container"); document.getElementById("empty-state").classList.add("hidden");
+      setTabLoading("util-container", true);
+      fetchPeriod(rangeFrom.value, rangeTo.value).then(rows => { periodBookings = rows; setTabLoading("util-container", false); renderUtil(rows.filter(passStatus)); });
+    }
+    else if (viewMode === "compliance") {
+      show("compliance-container"); document.getElementById("empty-state").classList.add("hidden");
+      setTabLoading("compliance-container", true);
+      fetchPeriod(rangeFrom.value, rangeTo.value).then(rows => { periodBookings = rows; setTabLoading("compliance-container", false); renderCompliance(rows.filter(passStatus)); });
+    }
     else { show("span-container"); document.getElementById("empty-state").classList.add("hidden"); renderSpan(visible); }
   }
 
@@ -1628,7 +1676,7 @@
   function revenueRows() {
     const mk = document.getElementById("rev-month").value; // "YYYY-MM"
     const rows = [];
-    allBookings.forEach(b => {
+    periodBookings.forEach(b => {
       const d = b.data; const start = parseSlotDateTime(d);
       if (!start || monthKeyOf(start) !== mk) return;
       const bill = billOf(d);
@@ -2072,6 +2120,7 @@
         adminStatusBy: currentUserEmail,
         statusHistory: arrayUnion({ status: newStatus, at, source: "dashboard", by: currentUserEmail })
       });
+      periodCache.clear();
       closeModal();
     } catch (err) {
       console.error("Failed to update status:", err);
@@ -2256,6 +2305,7 @@
       await updateDoc(doc(db, COLLECTION_NAME, activeModalDocId), {
         compliance: { onTime:"", selfieShared:"", selfieTimestamp:"", uniformCorrect:"", jobCompleted:"", verifiedBy:"", verificationDate:"", updatedAt:now, updatedBy:currentUserEmail }
       });
+      periodCache.clear();
       closeModal();
     } catch (err) {
       console.error("Failed to clear compliance:", err);
