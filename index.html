@@ -2669,20 +2669,18 @@ function setTabLoading(containerId, on) {
       const out = [];
       const seen = new Set();
       snapshot.forEach(rec => {
-        const data = rec.data();
-        // HARD EXCLUDE cancelled orders everywhere...
-        const os = String(fieldVal(data, FIELD.orderStatus) || "").trim();
-        if (/^cancel/i.test(os)) return;
-        // ... rest stays exactly as-is. The n8n delete workflow removes
-        // cancelled docs from Firestore, but there can be a lag (recency window /
-        // hourly schedule). This makes the dashboard instantly accurate: any order
-        // whose status is cancelled is dropped here, so it never appears on the
-        // calendar, in utilisation, in revenue, or in any metric.
-        const os = String(fieldVal(data, FIELD.orderStatus) || "").trim();
-        if (/^cancel/i.test(os)) return;
-        // If this doc came only from the compliance sheet sync (order not in the main
-        // booking sync), backfill the display fields from the compliance record so it
-        // still shows a name / home care / city and survives the nurse-name filter.
+  const data = rec.data();
+  // HARD EXCLUDE cancelled orders everywhere. The n8n delete workflow removes
+  // cancelled docs from Firestore, but there can be a lag (recency window /
+  // hourly schedule). This makes the dashboard instantly accurate: any order
+  // whose status is cancelled is dropped here, so it never appears on the
+  // calendar, in utilisation, in revenue, or in any metric.
+  const os = String(fieldVal(data, FIELD.orderStatus) || "").trim();
+  if (/^cancel/i.test(os)) return;
+  
+  // If this doc came only from the compliance sheet sync...
+  const _comp = complianceOf(data);
+  // ... rest of the function
         const _comp = complianceOf(data);
         if (_comp) {
           if ((!data.nurseName || String(data.nurseName).trim() === "") && _comp.nurseName) data.nurseName = _comp.nurseName;
