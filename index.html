@@ -2681,7 +2681,6 @@ function setTabLoading(containerId, on) {
   // If this doc came only from the compliance sheet sync...
   const _comp = complianceOf(data);
   // ... rest of the function
-        const _comp = complianceOf(data);
         if (_comp) {
           if ((!data.nurseName || String(data.nurseName).trim() === "") && _comp.nurseName) data.nurseName = _comp.nurseName;
           if ((!data.homecare || String(data.homecare).trim() === "") && _comp.homecare) data.homecare = _comp.homecare;
