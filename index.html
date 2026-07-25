@@ -2655,13 +2655,22 @@ function setTabLoading(containerId, on) {
     const _lo = new Date(Date.now() + TZ_OFFSET_MS); _lo.setUTCDate(_lo.getUTCDate() - 60);
     const _hi = new Date(Date.now() + TZ_OFFSET_MS); _hi.setUTCDate(_hi.getUTCDate() + 30);
     const winLo = dateKey(_lo), winHi = dateKey(_hi);
-    const bookingsSource = isHomecare
+     const bookingsSource = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
           where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi))
       : query(collection(db, COLLECTION_NAME),
           where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi));
-        // HARD EXCLUDE cancelled orders everywhere. The n8n delete workflow removes
+
+    onSnapshot(bookingsSource, (snapshot) => {
+      const out = [];
+      const seen = new Set();
+      snapshot.forEach(rec => {
+        const data = rec.data();
+        // HARD EXCLUDE cancelled orders everywhere...
+        const os = String(fieldVal(data, FIELD.orderStatus) || "").trim();
+        if (/^cancel/i.test(os)) return;
+        // ... rest stays exactly as-is. The n8n delete workflow removes
         // cancelled docs from Firestore, but there can be a lag (recency window /
         // hourly schedule). This makes the dashboard instantly accurate: any order
         // whose status is cancelled is dropped here, so it never appears on the
