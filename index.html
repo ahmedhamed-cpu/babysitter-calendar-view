@@ -1312,18 +1312,21 @@ function setTabLoading(containerId, on) {
   async function fetchPeriod(loKey, hiKey) {
     const cacheKey = `${loKey}|${hiKey}|${currentRole}|${currentAgency}`;
     if (periodCache.has(cacheKey)) return periodCache.get(cacheKey);
+    // loKey/hiKey are "YYYY-MM-DD" strings → convert to Date bounds (inclusive).
+    const lo = new Date(loKey + "T00:00:00Z");
+    const hi = new Date(hiKey + "T23:59:59Z");
     const src = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
-          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey))
+          where("bookedSlotDate", ">=", lo), where("bookedSlotDate", "<=", hi))
       : query(collection(db, COLLECTION_NAME),
-          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey));
+          where("bookedSlotDate", ">=", lo), where("bookedSlotDate", "<=", hi));
     const snap = await getDocs(src);
     const out = [];
     snap.forEach(rec => {
       const data = rec.data();
       const os = String(fieldVal(data, FIELD.orderStatus) || "").trim();
-      if (/^cancel/i.test(os)) return;                 // same cancelled exclusion as live
+      if (/^cancel/i.test(os)) return;
       if (data.nurseName) data.nurseName = cleanNurseName(data.nurseName);
       out.push({ id: rec.id, data });
     });
@@ -2653,17 +2656,19 @@ function setTabLoading(containerId, on) {
     if (appStarted) return; appStarted = true;
     startTicketsListener();
 
-       // Rolling window: 60 days back, 30 forward — the live calendar only streams this range.
-    // Older/further bookings are fetched on demand by Revenue/Utilisation/Compliance.
-    const _lo = new Date(Date.now() + TZ_OFFSET_MS); _lo.setUTCDate(_lo.getUTCDate() - 60);
-    const _hi = new Date(Date.now() + TZ_OFFSET_MS); _hi.setUTCDate(_hi.getUTCDate() + 30);
-    const winLo = dateKey(_lo), winHi = dateKey(_hi);
-     const bookingsSource = isHomecare
+       // Rolling window on the bookedSlotDate timestamp: 60 days back, 30 forward.
+    // Docs with a null bookedSlotDate fall out of the range query — intended.
+    const _now = Date.now();
+    const _loMs = _now - 60 * 86400000;
+    const _hiMs = _now + 30 * 86400000;
+    const winLo = new Date(_loMs);
+    const winHi = new Date(_hiMs);
+    const bookingsSource = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
-          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi))
+          where("bookedSlotDate", ">=", winLo), where("bookedSlotDate", "<=", winHi))
       : query(collection(db, COLLECTION_NAME),
-          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi));
+          where("bookedSlotDate", ">=", winLo), where("bookedSlotDate", "<=", winHi));
 
     onSnapshot(bookingsSource, (snapshot) => {
       const out = [];
