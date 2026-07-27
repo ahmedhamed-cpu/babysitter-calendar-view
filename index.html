@@ -1211,8 +1211,6 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
     return d.attendanceSource === "app-login" || (normStatus(d.status) === "Pending" && (hasAppLogin(d) || orderAttended(d)));
   };
   
-  const delays = scope.map(b => delayOf(b.data)).filter(v => v != null && !isNaN(v));
-  const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : null;
   const datePicker = document.getElementById("date-picker");
   const rangeFrom = document.getElementById("range-from");
   const rangeTo = document.getElementById("range-to");
@@ -1321,6 +1319,8 @@ function setTabLoading(containerId, on) {
         <div class="k-label">${label}</div>
         <div class="k-val" style="color:${hex}">${counts[key]}</div></div>`;
     };
+  const delays = scope.map(b => delayOf(b.data)).filter(v => v != null && !isNaN(v));
+  const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : null;
     document.getElementById("kpi-bar").innerHTML =
       `<div class="kpi"><div class="k-label">${mode==="day"?"Assigned today":"Assigned (scope)"}</div><div class="k-val">${scope.length}</div></div>` +
       statusTile("Pending","Pending","var(--text-2)") +
