@@ -298,6 +298,11 @@
       <span class="ml-2 admin-only">Agency rate</span>
       <div class="flex items-center gap-1 admin-only"><input type="number" id="rev-rate" min="0" step="0.5" class="icon-input h-9 px-2 rounded-lg border brd text-sm w-20 text-right" /><span>SAR/hr</span></div>
     </div>
+    <div id="bucket-filter" class="hidden view-tabs inline-flex items-center gap-1">
+      <button data-bucket="all" class="view-btn" data-active="true">All</button>
+      <button data-bucket="babysitting" class="view-btn" data-active="false">Babysitting</button>
+      <button data-bucket="medical" class="view-btn" data-active="false">Medical</button>
+    </div>
     <input id="search-input" type="text" placeholder="Search customer or nurse&hellip;" class="icon-input h-9 px-3 rounded-lg border brd text-sm w-56" />
     <select id="pkg-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All packages</option></select>
     <select id="eng-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm">
@@ -1169,7 +1174,13 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   let activeModalBooking = null;
   let viewMode = "day";
   let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "";
-  let catMajor = "babysitting", catSub = "";   // staff category filter; homecare forced to babysitting
+   let catMajor = "babysitting", catSub = "";   // staff category filter; homecare forced to babysitting
+  let bucketFilter = "all";                     // Utilisation/Revenue: "all" | "babysitting" | "medical"
+  function passBucket(d) {
+    if (bucketFilter === "all") return true;
+    const c = subcategoryOf(d);
+    return bucketFilter === "babysitting" ? BABYSITTING_CATS.has(c) : MEDICAL_CATS.has(c);
+  }
   let engagementMap = {};
   let nurseMeta = {};                 // nurse -> { homecare }
   let bsUniverse = {};                // idKey -> { slug, name, agency, city, iqama, schedule, active, order }
@@ -2891,8 +2902,9 @@ function setTabLoading(containerId, on) {
       renderGrid();
     }, (err) => { console.warn("babysitters listener:", err && err.code); });
 
-    rebuildNameIndex();
+     rebuildNameIndex();
     renderGrid();
+    window._dbg = { get all(){return allBookings;}, sub: subcategoryOf, MED: MEDICAL_CATS, BABY: BABYSITTING_CATS };
   }
 
   // ---------- ROLES ----------
