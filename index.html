@@ -240,11 +240,13 @@
             <button id="cat-babysitting" class="view-btn" data-cat="babysitting" data-active="true">Babysitting</button>
             <button id="cat-medical" class="view-btn" data-cat="medical" data-active="false">Medical</button>
           </div>
-          <select id="cat-sub" class="icon-input h-9 px-3 rounded-lg border brd text-sm hidden">
+            <select id="cat-sub" class="icon-input h-9 px-3 rounded-lg border brd text-sm hidden">
             <option value="">All medical</option>
             <option value="Lab Package">Lab test</option>
-            <option value="Physiotherapy">Physiotherapy</option>
+            <option value="Physiotherapy/Rehab">Physiotherapy</option>
             <option value="IV Therapy">IV Therapy</option>
+            <option value="Custom Order">Custom Order</option>
+            <option value="Administration Package">Admin Package</option>
           </select>
         </div>
       </div>
@@ -747,7 +749,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   const CATEGORY_FIELDS    = ["category","Category","packageType2","Package Type 2","PackageType2","Package_Type_2"];
   const SUBCATEGORY_FIELDS = ["subcategory","Subcategory","subCategory","Sub Category","sub_category"];
   const BABYSITTING_CATS = new Set(["Babysitter", "Elderly Care"]);
-  const MEDICAL_CATS = new Set(["Physiotherapy", "Lab Package", "IV Therapy", "Custom Order", "Administration Package", "Operational Support"]);
+  const MEDICAL_CATS = new Set(["Physiotherapy/Rehab", "Lab Package", "IV Therapy", "Custom Order", "Administration Package"]);
   const categoryOf    = d => String(fieldVal(d, CATEGORY_FIELDS) || "").trim();
   const subcategoryOf = d => String(fieldVal(d, SUBCATEGORY_FIELDS) || "").trim();
    function passCategory(d) {
