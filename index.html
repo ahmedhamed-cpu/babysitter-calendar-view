@@ -515,7 +515,9 @@
       <p class="font-semibold" style="color:var(--text)">Ticket sent</p>
       <p class="text-sm muted2">The ops team has been notified on Slack.</p>
     </div>
- 
+  </div>
+</div>
+  
  <div id="gticket-modal" class="modal-backdrop hidden">
   <div class="card rounded-2xl shadow-xl w-[460px] max-w-[92vw] p-5 max-h-[90vh] overflow-y-auto">
     <div class="flex items-start justify-between mb-1">
@@ -744,7 +746,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   const categoryOf    = d => String(fieldVal(d, CATEGORY_FIELDS) || "").trim();
   const subcategoryOf = d => String(fieldVal(d, SUBCATEGORY_FIELDS) || "").trim();
    function passCategory(d) {
-    const c = subcategoryOf(d);
+      const c = subcategoryOf(d) || categoryOf(d);
     // Homecare can ONLY ever see babysitting / elderly care — never medical or other.
     if (isHomecare) return BABYSITTING_CATS.has(c);
     if (catMajor === "babysitting") return BABYSITTING_CATS.has(c);
@@ -2899,7 +2901,7 @@ function setTabLoading(containerId, on) {
   // Firestore security rules; this just shapes the UI.
   const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com", "nilesh.pandaya@feelvaleo.com"];
   // Homecare partner logins → the agency whose bookings they may see.
-  const HOMECARE_AGENCY = { "giovannivillar0522@gmail.com": "Helpful Agency" };
+  const HOMECARE_AGENCY = { "giovannivillar0522@gmail.com": "Helpful agency" };
   function roleOf(email) {
     const e = (email || "").toLowerCase().trim();
     if (ADMIN_EMAILS.includes(e)) return "admin";
