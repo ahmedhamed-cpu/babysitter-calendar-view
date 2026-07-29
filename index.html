@@ -1458,12 +1458,11 @@ function setTabLoading(containerId, on) {
     // loKey/hiKey are "YYYY-MM-DD" strings → convert to Date bounds (inclusive).
     const lo = new Date(loKey + "T00:00:00Z");
     const hi = new Date(hiKey + "T23:59:59Z");
-    const src = isHomecare
+     const src = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
-          where("bookedSlotDate", ">=", lo), where("bookedSlotDate", "<=", hi))
-      : query(collection(db, COLLECTION_NAME),
-          where("bookedSlotDate", ">=", lo), where("bookedSlotDate", "<=", hi));
+          where("subcategory", "in", ["Babysitter", "Elderly Care"]),
+          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey))
     const snap = await getDocs(src);
     const out = [];
     snap.forEach(rec => {
@@ -2807,12 +2806,13 @@ function setTabLoading(containerId, on) {
     const _hiMs = _now + 30 * 86400000;
     const winLo = new Date(_loMs);
     const winHi = new Date(_hiMs);
-    const bookingsSource = isHomecare
+     const bookingsSource = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
-          where("bookedSlotDate", ">=", winLo), where("bookedSlotDate", "<=", winHi))
+          where("subcategory", "in", ["Babysitter", "Elderly Care"]),
+          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi))
       : query(collection(db, COLLECTION_NAME),
-          where("bookedSlotDate", ">=", winLo), where("bookedSlotDate", "<=", winHi));
+          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi));
 
     onSnapshot(bookingsSource, (snapshot) => {
       const out = [];
