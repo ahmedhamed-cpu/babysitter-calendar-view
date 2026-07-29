@@ -95,6 +95,7 @@
   .viewer-only { display:none; }
   body.viewer .viewer-only { display:block; }
   body.viewer .admin-only { display:none !important; }         /* admin-exclusive controls */
+  body:not(.role-admin) .admin-tab-only { display:none !important; }  /* Compliance + Revenue: admins only */
   body.role-homecare .staff-only { display:none !important; }  /* staff-only areas hidden from homecare */
   body.role-homecare .viewer-only { display:none !important; } /* homecare gets its own minimal UI, not the viewer note */
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
@@ -286,8 +287,8 @@
       <button id="view-week" class="view-btn" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn" data-view="range" data-active="false">Range</button>
       <button id="view-util" class="view-btn staff-only" data-view="utilisation" data-active="false">Utilisation</button>
-      <button id="view-compliance" class="view-btn admin-only" data-view="compliance" data-active="false">Compliance</button>
-      <button id="view-revenue" class="view-btn staff-only" data-view="revenue" data-active="false">Revenue</button>
+       <button id="view-compliance" class="view-btn admin-tab-only" data-view="compliance" data-active="false">Compliance</button>
+      <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
     </div>
@@ -427,7 +428,7 @@
     <!-- Tab switch: keeps the card compact by showing one section at a time -->
     <div class="modal-tabs flex gap-1 my-3 p-1 rounded-xl staff-only">
       <button id="mtab-status" class="modal-tab flex-1" data-active="true">Status &amp; Contact</button>
-      <button id="mtab-compliance" class="modal-tab flex-1 admin-only" data-active="false">Compliance <span id="mtab-comp-dot" class="mtab-dot hidden"></span></button>
+      <button id="mtab-compliance" class="modal-tab flex-1 admin-tab-only" data-active="false">Compliance <span id="mtab-comp-dot" class="mtab-dot hidden"></span></button>
     </div>
 
     <!-- ===== PANE 1: STATUS & CONTACT ===== -->
@@ -2468,9 +2469,9 @@ function setTabLoading(containerId, on) {
   rangeTo.addEventListener("change", renderGrid);
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
-  function setView(mode) {
-    if (isHomecare && !["day","week","range","tickets","profiles"].includes(mode)) mode = "day";
-    if (!isAdmin && mode === "compliance") mode = "day";   // compliance is admin-only
+   function setView(mode) {
+    if (isHomecare && !["day","week","range","tickets","profiles"].includes(mode)) mode = "day";      // homecare
+    if (!isAdmin && ["compliance","revenue"].includes(mode)) mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
