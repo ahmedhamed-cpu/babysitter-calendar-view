@@ -1458,11 +1458,13 @@ function setTabLoading(containerId, on) {
     // loKey/hiKey are "YYYY-MM-DD" strings → convert to Date bounds (inclusive).
     const lo = new Date(loKey + "T00:00:00Z");
     const hi = new Date(hiKey + "T23:59:59Z");
-     const src = isHomecare
+    const src = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
           where("subcategory", "in", ["Babysitter", "Elderly Care"]),
           where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey))
+      : query(collection(db, COLLECTION_NAME),
+          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey));
     const snap = await getDocs(src);
     const out = [];
     snap.forEach(rec => {
