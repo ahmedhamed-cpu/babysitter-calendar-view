@@ -2841,8 +2841,7 @@ function setTabLoading(containerId, on) {
         // Re-check after compliance backfill in case the status came from the sheet.
         const os2 = String(fieldVal(data, FIELD.orderStatus) || "").trim();
         if (/^cancel/i.test(os2)) return;
-        
-        }    
+      
         const rawNurse = fieldVal(data, FIELD.nurseName);
         if (rawNurse != null && rawNurse !== "") data.nurseName = cleanNurseName(rawNurse);
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
