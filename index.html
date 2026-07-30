@@ -2806,8 +2806,8 @@ function setTabLoading(containerId, on) {
     const _now = Date.now();
     const _loMs = _now - 60 * 86400000;
     const _hiMs = _now + 30 * 86400000;
-    const winLo = new Date(_loMs);
-    const winHi = new Date(_hiMs);
+   const winLo = dateKey(new Date(_loMs + TZ_OFFSET_MS));
+    const winHi = dateKey(new Date(_hiMs + TZ_OFFSET_MS));
      const bookingsSource = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
@@ -2841,11 +2841,8 @@ function setTabLoading(containerId, on) {
         // Re-check after compliance backfill in case the status came from the sheet.
         const os2 = String(fieldVal(data, FIELD.orderStatus) || "").trim();
         if (/^cancel/i.test(os2)) return;
-        // Homecare partners only ever load their own agency's bookings.
-        if (isHomecare) {
-          const hc = String(homeCareOf(fieldVal(data, FIELD.nurseName)||"") || fieldVal(data, FIELD.homecare) || "").trim().toLowerCase();
-          if (!currentAgency || hc !== currentAgency.toLowerCase()) return;
-        }
+        
+        }    
         const rawNurse = fieldVal(data, FIELD.nurseName);
         if (rawNurse != null && rawNurse !== "") data.nurseName = cleanNurseName(rawNurse);
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
