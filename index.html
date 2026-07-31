@@ -1156,6 +1156,8 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   const fmtLong = dk => new Date(dk+"T00:00:00Z").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric",timeZone:"UTC"});
   const fmtStamp = iso => { const dt = new Date(iso); return isNaN(dt) ? "" : dt.toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",timeZone:"Asia/Riyadh"}); };
   function dateKey(d) { return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0"); }
+  const dateNum = d => Number(dateKey(d).replace(/-/g, ""));   // Date → 20270108
+  const keyToNum = k => Number(String(k).slice(0,10).replace(/-/g, "")) || 0;  // "2027-01-08" → 20270108
   const bDateKey = b => { const dt = parseSlotDateTime(b.data); return dt ? dateKey(dt) : null; };
   function spanDays(fromDk, toDk) {
     const a = new Date(fromDk+"T00:00:00Z"), b = new Date(toDk+"T00:00:00Z");
@@ -1458,13 +1460,14 @@ function setTabLoading(containerId, on) {
     // loKey/hiKey are "YYYY-MM-DD" strings → convert to Date bounds (inclusive).
     const lo = new Date(loKey + "T00:00:00Z");
     const hi = new Date(hiKey + "T23:59:59Z");
+     const loNum = keyToNum(loKey), hiNum = keyToNum(hiKey);
     const src = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
           where("subcategory", "in", ["Babysitter", "Elderly Care"]),
-          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey))
+          where("slotDateNum", ">=", loNum), where("slotDateNum", "<=", hiNum))
       : query(collection(db, COLLECTION_NAME),
-          where("slotDateKey", ">=", loKey), where("slotDateKey", "<=", hiKey));
+          where("slotDateNum", ">=", loNum), where("slotDateNum", "<=", hiNum));
     const snap = await getDocs(src);
     const out = [];
     snap.forEach(rec => {
@@ -2806,15 +2809,15 @@ function setTabLoading(containerId, on) {
     const _now = Date.now();
     const _loMs = _now - 60 * 86400000;
     const _hiMs = _now + 30 * 86400000;
-   const winLo = dateKey(new Date(_loMs + TZ_OFFSET_MS));
-    const winHi = dateKey(new Date(_hiMs + TZ_OFFSET_MS));
-     const bookingsSource = isHomecare
+   const winLo = dateNum(new Date(_loMs + TZ_OFFSET_MS));
+    const winHi = dateNum(new Date(_hiMs + TZ_OFFSET_MS));
+    const bookingsSource = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
           where("subcategory", "in", ["Babysitter", "Elderly Care"]),
-          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi))
+          where("slotDateNum", ">=", winLo), where("slotDateNum", "<=", winHi))
       : query(collection(db, COLLECTION_NAME),
-          where("slotDateKey", ">=", winLo), where("slotDateKey", "<=", winHi));
+          where("slotDateNum", ">=", winLo), where("slotDateNum", "<=", winHi));
 
     onSnapshot(bookingsSource, (snapshot) => {
       const out = [];
