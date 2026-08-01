@@ -2336,23 +2336,7 @@ function setTabLoading(containerId, on) {
     try { await applyStatus(activeModalDocId, newStatus); closeModal(); }
     catch (err) { console.error("Failed to update status:", err); alert("Could not save the status change. If 'permission-denied', publish the updated rules."); }
   }));
-    const newStatus = btn.getAttribute("data-status");
-    const at = new Date().toISOString();
-    try {
-      await updateDoc(doc(db, COLLECTION_NAME, activeModalDocId), {
-        adminStatus: newStatus,
-        adminStatusAt: at,
-        adminStatusBy: currentUserEmail,
-        statusHistory: arrayUnion({ status: newStatus, at, source: "dashboard", by: currentUserEmail })
-      });
-      periodCache.clear();
-      closeModal();
-    } catch (err) {
-      console.error("Failed to update status:", err);
-      alert("Could not save the status change.\n\nIf this says 'permission-denied', your Firestore rules must allow the adminStatus / adminStatusAt / adminStatusBy / statusHistory fields — publish the updated rules.");
-    }
-  }));
-
+    
   // ----- Compliance modal logic -----
   let modalCompliance = {};
   function switchModalTab(tab) {
