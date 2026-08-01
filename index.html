@@ -453,8 +453,10 @@
           <button data-status="Absent" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100">&#10005; Absent</button>
           <button data-status="Sick Leave" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100">&#9888; Sick Leave</button>
           <button data-status="No Show" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100">&#8856; No Show</button>
-        </div>
+        </div> 
         <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
+        <a id="modal-sick-doc" target="_blank" rel="noopener noreferrer" class="hidden block text-center mt-2 text-xs underline" style="color:var(--gold-dark)">&#128206; View sick-leave report</a>
+        <a id="modal-sick-doc" target="_blank" rel="noopener noreferrer" class="hidden block text-center mt-2 text-xs underline" style="color:var(--gold-dark)">&#128206; View sick-leave report</a>
       </div>
       <p class="viewer-only text-xs muted2 italic">View-only access — marking attendance and status is limited to admins.</p>
 
@@ -565,7 +567,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, arrayUnion, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-
+  import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
   const firebaseConfig = {
     apiKey: "AIzaSyB5OShyCIKMqu5RijdCKhohu4uB7yzARIY",
     authDomain: "bs-calendar-view.firebaseapp.com",
@@ -578,7 +580,7 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
-
+  const storage = getStorage(app);
   const COLLECTION_NAME = "bookings";
   // n8n webhooks — the "Sync now" button POSTs to both in parallel so the upsert
   // (fresh attendance / new bookings) and delete (recently-cancelled cleanup) run
@@ -945,7 +947,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   function colorFor(name) { return idKey(name) === "unassigned" ? "hsl(215,12%,58%)" : `hsl(${hueFor(name)},62%,50%)`; }
   function colorSoft(name, a) { return idKey(name) === "unassigned" ? `hsla(215,12%,58%,${a})` : `hsla(${hueFor(name)},66%,52%,${a})`; }
 
-  const statusColor = { Attended:"#10b981", Absent:"#f43f5e", "Sick Leave":"#f59e0b", "No Show":"#fb923c" };
+    const statusColor = { Attended:"#10b981", Absent:"#ef4444", "Sick Leave":"#ef4444", "No Show":"#ef4444" };
   function hexA(hex, a) { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return `rgba(${r},${g},${b},${a})`; }
 
   const ENG_COLOR = { Monthly:"#8b5cf6", Weekly:"#3b82f6", Daily:"#0ea5a3", Available:"#94a3b8" };
@@ -1261,15 +1263,29 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
       const rec = data[n] || (data[n] = { Monthly:[], Weekly:[], Daily:[], any:[] });
       rec.any.push(+dt); if (e) rec[e].push(+dt);
     });
-    // ref falls inside a run's [first-1d, last+1d] window → that run is still active
-    const within = arr => arr.length && refMs >= Math.min(...arr) - DAY && refMs <= Math.max(...arr) + DAY;
+    // A run is ACTIVE only if the reference date sits inside it AND the run hasn't
+    // already ended. "Ended" = the last booking of that run is in the past relative
+    // to the reference date. This makes tags realtime: once a monthly package's last
+    // booking passes, the nurse stops being tagged Monthly.
+    const isActiveRun = arr => {
+      if (!arr.length) return false;
+      const first = Math.min(...arr), last = Math.max(...arr);
+      return refMs >= first - DAY && refMs <= last + DAY;   // ref within the run's span
+    };
     const out = {};
     Object.keys(data).forEach(n => {
       const rec = data[n];
-      if (rec.Monthly.length && within(rec.Monthly)) out[n] = "Monthly";
-      else if (rec.Weekly.length && within(rec.Weekly)) out[n] = "Weekly";
-      else if (rec.Monthly.length || rec.Weekly.length || rec.Daily.length) out[n] = "Daily";
-      else { const a = rec.any; const span = (Math.max(...a) - Math.min(...a)) / DAY + 1; out[n] = span > 14 ? "Monthly" : (span >= 5 ? "Weekly" : "Daily"); }
+      if (rec.Monthly.length && isActiveRun(rec.Monthly)) out[n] = "Monthly";
+      else if (rec.Weekly.length && isActiveRun(rec.Weekly)) out[n] = "Weekly";
+      else if (rec.Daily.length && isActiveRun(rec.Daily)) out[n] = "Daily";
+      // No active tagged run → infer ONLY from bookings around the reference date,
+      // so finished packages don't leave a stale Monthly/Weekly label.
+      else {
+        const near = rec.any.filter(t => Math.abs(t - refMs) <= 7 * DAY);
+        if (!near.length) { out[n] = "Available"; return; }
+        const span = (Math.max(...near) - Math.min(...near)) / DAY + 1;
+        out[n] = span > 14 ? "Monthly" : (span >= 5 ? "Weekly" : "Daily");
+      }
     });
     return out;
   }
@@ -1401,9 +1417,12 @@ function setTabLoading(containerId, on) {
   // ---------- SHARED BOOKING CARD ----------
   // Used by both the day timeline (absolute, width = duration) and the
   // week/range grid (static, uniform), so the slot looks identical everywhere.
+    // Unified status colours on the calendar (not per-babysitter):
+  // Pending = light gold, Attended = green, Absent / Sick Leave / No Show = red.
   function cardColors(status, nurseName) {
-    const isP = status === "Pending";
-    return { border: isP ? colorFor(nurseName) : statusColor[status], bg: isP ? colorSoft(nurseName, 0.16) : hexA(statusColor[status], 0.2) };
+    if (status === "Pending") return { border: "#F6BD22", bg: "rgba(246,189,34,0.18)" };
+    const c = statusColor[status] || "#94a3b8";
+    return { border: c, bg: hexA(c, 0.2) };
   }
   function cardInner(x) {
     const d = x.b.data;
@@ -2239,31 +2258,85 @@ function setTabLoading(containerId, on) {
     const tel = contact ? telLink(contact.phone) : "", wa = contact ? waLink(contact.whatsapp) : "";
     if (tel) { callEl.href = tel; callEl.classList.remove("hidden"); } else { callEl.classList.add("hidden"); callEl.removeAttribute("href"); }
     if (wa) { waEl.href = wa; waEl.classList.remove("hidden"); } else { waEl.classList.add("hidden"); waEl.removeAttribute("href"); }
-
+{
+  const sl = document.getElementById("modal-sick-doc");
+  if (d.sickLeaveDoc && d.sickLeaveDoc.url) {
+    sl.href = d.sickLeaveDoc.url;
+    sl.classList.remove("hidden");
+  } else {
+    sl.classList.add("hidden");
+    sl.removeAttribute("href");
+  }
+}
     document.getElementById("modal-loc-none").classList.toggle("hidden", isUrl(cLoc) || !!tel || !!wa);
 
     // ----- Compliance section -----
     modalCompliance = Object.assign({ onTime:"", selfieShared:"", selfieTimestamp:"", uniformCorrect:"", jobCompleted:"" }, complianceOf(d) || {});
-    const savedComp = complianceOf(d);
-    const dly = delayOf(d);
-    document.getElementById("comp-auto").innerHTML = "Order status: <b>" + escapeHtml(effStatus(d)) + "</b>" + (dly!=null ? " · Delay in delivery: <b>" + dly + " min</b>" : "");
-    const stEl = document.getElementById("comp-selfie-ts"); if (stEl) stEl.value = modalCompliance.selfieTimestamp || "";
-    const vbEl = document.getElementById("comp-verified-by"); if (vbEl) vbEl.textContent = (savedComp && savedComp.verifiedBy) || currentUserEmail || "—";
-    renderComplianceChecks();
-    updateComplianceBadge();
-    renderComplianceReadonly(d);
-    // Always open on the Status tab; flag the Compliance tab if a record exists.
-    switchModalTab("status");
-    document.getElementById("mtab-comp-dot").classList.toggle("hidden", !computeCompliance(savedComp).verified);
-
-    modal.classList.remove("hidden");
+    async function applyStatus(docId, newStatus, extra = {}) {
+    const at = new Date().toISOString();
+    await updateDoc(doc(db, COLLECTION_NAME, docId), {
+      adminStatus: newStatus, adminStatusAt: at, adminStatusBy: currentUserEmail,
+      statusHistory: arrayUnion({ status: newStatus, at, source: "dashboard", by: currentUserEmail }),
+      ...extra
+    });
+    periodCache.clear();
   }
-  function closeModal() { modal.classList.add("hidden"); activeModalDocId = null; }
-  document.getElementById("modal-close").addEventListener("click", closeModal);
-  modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+
+  const isValidUrl = u => /^https?:\/\/.+/i.test(String(u || "").trim());
 
   document.querySelectorAll(".modal-status-btn").forEach(btn => btn.addEventListener("click", async () => {
     if (!activeModalDocId || !isAdmin) return;
+    const newStatus = btn.getAttribute("data-status");
+
+    // Sick Leave requires a link to the medical report BEFORE the status is set.
+    if (newStatus === "Sick Leave") {
+      const link = (prompt("Paste the link to the sick-leave / medical report (Google Drive, etc.):", "") || "").trim();
+      if (!link) return;                       // cancelled → status NOT changed
+      if (!isValidUrl(link)) { alert("That doesn't look like a valid link. It must start with http:// or https://"); return; }
+      try {
+        await applyStatus(activeModalDocId, "Sick Leave", {
+          sickLeaveDoc: { url: link, addedBy: currentUserEmail, addedAt: new Date().toISOString() }
+        });
+        closeModal();
+      } catch (err) {
+        console.error("Failed to save sick leave:", err);
+        alert("Could not save. If 'permission-denied', publish the updated rules allowing the sickLeaveDoc field.");
+      }
+      return;
+    }
+
+    try { await applyStatus(activeModalDocId, newStatus); closeModal(); }
+    catch (err) { console.error("Failed to update status:", err); alert("Could not save the status change. If 'permission-denied', publish the updated rules."); }
+  }));
+    // Sick Leave requires a medical report upload BEFORE the status is set.
+    if (newStatus === "Sick Leave") {
+      const docId = activeModalDocId;
+      sickLeaveInput.value = "";
+      sickLeaveInput.onchange = async () => {
+        const file = sickLeaveInput.files && sickLeaveInput.files[0];
+        if (!file) return;   // cancelled → status NOT changed
+        if (file.size > 8 * 1024 * 1024) { alert("File too large (max 8 MB)."); return; }
+        try {
+          const path = `sick-leave/${docId}/${Date.now()}_${file.name.replace(/[^\w.\-]+/g, "_")}`;
+          const sref = storageRef(storage, path);
+          await uploadBytes(sref, file);
+          const url = await getDownloadURL(sref);
+          await applyStatus(docId, "Sick Leave", {
+            sickLeaveDoc: { url, name: file.name, uploadedBy: currentUserEmail, uploadedAt: new Date().toISOString() }
+          });
+          closeModal();
+        } catch (e) {
+          console.error(e);
+          alert("Couldn't upload the medical report.\nIf it says 'unauthorized', enable Firebase Storage and publish Storage rules allowing signed-in writes to sick-leave/.");
+        }
+      };
+      sickLeaveInput.click();
+      return;
+    }
+
+    try { await applyStatus(activeModalDocId, newStatus); closeModal(); }
+    catch (err) { console.error("Failed to update status:", err); alert("Could not save the status change. If 'permission-denied', publish the updated rules."); }
+  }));
     const newStatus = btn.getAttribute("data-status");
     const at = new Date().toISOString();
     try {
@@ -2806,18 +2879,15 @@ function setTabLoading(containerId, on) {
 
        // Rolling window on the bookedSlotDate timestamp: 60 days back, 30 forward.
     // Docs with a null bookedSlotDate fall out of the range query — intended.
-    const _now = Date.now();
-    const _loMs = _now - 60 * 86400000;
-    const _hiMs = _now + 30 * 86400000;
-   const winLo = dateNum(new Date(_loMs + TZ_OFFSET_MS));
-    const winHi = dateNum(new Date(_hiMs + TZ_OFFSET_MS));
+    // SOLID BASIS: the live calendar no longer depends on slotDateNum being perfect.
+    // Staff stream the whole collection; homecare stream only their agency's babysitting
+    // rows (required by the security rules). Date filtering happens CLIENT-SIDE via
+    // parseSlotDateTime(bookedSlotDate) — robust to any slotDateNum/timestamp issue.
     const bookingsSource = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
-          where("subcategory", "in", ["Babysitter", "Elderly Care"]),
-          where("slotDateNum", ">=", winLo), where("slotDateNum", "<=", winHi))
-      : query(collection(db, COLLECTION_NAME),
-          where("slotDateNum", ">=", winLo), where("slotDateNum", "<=", winHi));
+          where("subcategory", "in", ["Babysitter", "Elderly Care"]))
+      : collection(db, COLLECTION_NAME);
 
     onSnapshot(bookingsSource, (snapshot) => {
       const out = [];
