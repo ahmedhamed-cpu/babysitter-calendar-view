@@ -1487,6 +1487,10 @@ function setTabLoading(containerId, on) {
       : query(collection(db, COLLECTION_NAME),
           where("slotDateNum", ">=", loNum), where("slotDateNum", "<=", hiNum));
     const snap = await getDocs(src);
+    console.log("Documents returned:", snap.size);
+snap.forEach(doc => {
+  console.log(doc.id, doc.data().orderId, doc.data().slotDateNum);
+});
     const out = [];
     snap.forEach(rec => {
       const data = rec.data();
