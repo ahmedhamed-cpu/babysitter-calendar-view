@@ -2283,59 +2283,48 @@ function setTabLoading(containerId, on) {
 
   const isValidUrl = u => /^https?:\/\/.+/i.test(String(u || "").trim());
 
-  document.querySelectorAll(".modal-status-btn").forEach(btn => btn.addEventListener("click", async () => {
+  document.querySelectorAll(".modal-status-btn").forEach(btn =>
+  btn.addEventListener("click", async () => {
     if (!activeModalDocId || !isAdmin) return;
+
     const newStatus = btn.getAttribute("data-status");
 
     // Sick Leave requires a link to the medical report BEFORE the status is set.
     if (newStatus === "Sick Leave") {
       const link = (prompt("Paste the link to the sick-leave / medical report (Google Drive, etc.):", "") || "").trim();
-      if (!link) return;                       // cancelled → status NOT changed
-      if (!isValidUrl(link)) { alert("That doesn't look like a valid link. It must start with http:// or https://"); return; }
+      if (!link) return;
+
+      if (!isValidUrl(link)) {
+        alert("That doesn't look like a valid link. It must start with http:// or https://");
+        return;
+      }
+
       try {
         await applyStatus(activeModalDocId, "Sick Leave", {
-          sickLeaveDoc: { url: link, addedBy: currentUserEmail, addedAt: new Date().toISOString() }
+          sickLeaveDoc: {
+            url: link,
+            addedBy: currentUserEmail,
+            addedAt: new Date().toISOString()
+          }
         });
         closeModal();
       } catch (err) {
         console.error("Failed to save sick leave:", err);
         alert("Could not save. If 'permission-denied', publish the updated rules allowing the sickLeaveDoc field.");
       }
+
       return;
     }
 
-    try { await applyStatus(activeModalDocId, newStatus); closeModal(); }
-    catch (err) { console.error("Failed to update status:", err); alert("Could not save the status change. If 'permission-denied', publish the updated rules."); }
-  }));
-    // Sick Leave requires a medical report upload BEFORE the status is set.
-    if (newStatus === "Sick Leave") {
-      const docId = activeModalDocId;
-      sickLeaveInput.value = "";
-      sickLeaveInput.onchange = async () => {
-        const file = sickLeaveInput.files && sickLeaveInput.files[0];
-        if (!file) return;   // cancelled → status NOT changed
-        if (file.size > 8 * 1024 * 1024) { alert("File too large (max 8 MB)."); return; }
-        try {
-          const path = `sick-leave/${docId}/${Date.now()}_${file.name.replace(/[^\w.\-]+/g, "_")}`;
-          const sref = storageRef(storage, path);
-          await uploadBytes(sref, file);
-          const url = await getDownloadURL(sref);
-          await applyStatus(docId, "Sick Leave", {
-            sickLeaveDoc: { url, name: file.name, uploadedBy: currentUserEmail, uploadedAt: new Date().toISOString() }
-          });
-          closeModal();
-        } catch (e) {
-          console.error(e);
-          alert("Couldn't upload the medical report.\nIf it says 'unauthorized', enable Firebase Storage and publish Storage rules allowing signed-in writes to sick-leave/.");
-        }
-      };
-      sickLeaveInput.click();
-      return;
+    try {
+      await applyStatus(activeModalDocId, newStatus);
+      closeModal();
+    } catch (err) {
+      console.error("Failed to update status:", err);
+      alert("Could not save the status change. If 'permission-denied', publish the updated rules.");
     }
-
-    try { await applyStatus(activeModalDocId, newStatus); closeModal(); }
-    catch (err) { console.error("Failed to update status:", err); alert("Could not save the status change. If 'permission-denied', publish the updated rules."); }
-  }));
+  })
+);
     
   // ----- Compliance modal logic -----
   let modalCompliance = {};
