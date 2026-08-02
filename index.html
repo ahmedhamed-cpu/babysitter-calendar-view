@@ -2289,6 +2289,8 @@ function setTabLoading(containerId, on) {
     activeModalDocId = null;
     activeModalBooking = null;
   }
+  document.getElementById("modal-close").addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
 
   // ----- Status buttons (attendance) -----
   async function applyStatus(docId, newStatus, extra = {}) {
