@@ -566,7 +566,6 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, arrayUnion, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-  import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
   const firebaseConfig = {
     apiKey: "AIzaSyB5OShyCIKMqu5RijdCKhohu4uB7yzARIY",
     authDomain: "bs-calendar-view.firebaseapp.com",
@@ -579,7 +578,6 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
-  const storage = getStorage(app);
   const COLLECTION_NAME = "bookings";
   // n8n webhooks — the "Sync now" button POSTs to both in parallel so the upsert
   // (fresh attendance / new bookings) and delete (recently-cancelled cleanup) run
@@ -1487,10 +1485,6 @@ function setTabLoading(containerId, on) {
       : query(collection(db, COLLECTION_NAME),
           where("slotDateNum", ">=", loNum), where("slotDateNum", "<=", hiNum));
     const snap = await getDocs(src);
-    console.log("Documents returned:", snap.size);
-snap.forEach(doc => {
-  console.log(doc.id, doc.data().orderId, doc.data().slotDateNum);
-});
     const out = [];
     snap.forEach(rec => {
       const data = rec.data();
@@ -2097,6 +2091,10 @@ snap.forEach(doc => {
     let all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
     // Homecare partners only see (and manage) their own agency's babysitters.
     if (isHomecare) all = all.filter(u => (u.agency || "").toLowerCase() === (currentAgency || "").toLowerCase());
+    // Toolbar filters now apply to Profiles too — fast agency/city/engagement narrowing.
+    if (hcFilter)   all = all.filter(u => (u.agency || "") === hcFilter);
+    if (cityFilter) all = all.filter(u => (u.city || "") === cityFilter);
+    if (engFilter)  all = all.filter(u => engagementOf(u.name) === engFilter);
     const q = searchText;
     const list = all.filter(u => !q || (u.name + " " + (u.agency||"") + " " + (u.city||"")).toLowerCase().includes(q));
     const activeCount = all.filter(u => u.active).length;
@@ -2275,7 +2273,25 @@ snap.forEach(doc => {
 
     // ----- Compliance section -----
     modalCompliance = Object.assign({ onTime:"", selfieShared:"", selfieTimestamp:"", uniformCorrect:"", jobCompleted:"" }, complianceOf(d) || {});
-    async function applyStatus(docId, newStatus, extra = {}) {
+
+    // Render compliance UI, reset to the Status tab, then reveal the modal.
+    renderComplianceChecks();
+    const _stEl = document.getElementById("comp-selfie-ts");
+    if (_stEl) _stEl.value = modalCompliance.selfieTimestamp || "";
+    updateComplianceBadge();
+    renderComplianceReadonly(d);
+    switchModalTab("status");
+    modal.classList.remove("hidden");
+  }
+
+  function closeModal() {
+    modal.classList.add("hidden");
+    activeModalDocId = null;
+    activeModalBooking = null;
+  }
+
+  // ----- Status buttons (attendance) -----
+  async function applyStatus(docId, newStatus, extra = {}) {
     const at = new Date().toISOString();
     await updateDoc(doc(db, COLLECTION_NAME, docId), {
       adminStatus: newStatus, adminStatusAt: at, adminStatusBy: currentUserEmail,
@@ -2284,52 +2300,29 @@ snap.forEach(doc => {
     });
     periodCache.clear();
   }
-
   const isValidUrl = u => /^https?:\/\/.+/i.test(String(u || "").trim());
-
-  document.querySelectorAll(".modal-status-btn").forEach(btn =>
-  btn.addEventListener("click", async () => {
+  document.querySelectorAll(".modal-status-btn").forEach(btn => btn.addEventListener("click", async () => {
     if (!activeModalDocId || !isAdmin) return;
-
     const newStatus = btn.getAttribute("data-status");
-
-    // Sick Leave requires a link to the medical report BEFORE the status is set.
     if (newStatus === "Sick Leave") {
       const link = (prompt("Paste the link to the sick-leave / medical report (Google Drive, etc.):", "") || "").trim();
       if (!link) return;
-
-      if (!isValidUrl(link)) {
-        alert("That doesn't look like a valid link. It must start with http:// or https://");
-        return;
-      }
-
+      if (!isValidUrl(link)) { alert("That doesn't look like a valid link. It must start with http:// or https://"); return; }
       try {
         await applyStatus(activeModalDocId, "Sick Leave", {
-          sickLeaveDoc: {
-            url: link,
-            addedBy: currentUserEmail,
-            addedAt: new Date().toISOString()
-          }
+          sickLeaveDoc: { url: link, addedBy: currentUserEmail, addedAt: new Date().toISOString() }
         });
         closeModal();
       } catch (err) {
         console.error("Failed to save sick leave:", err);
         alert("Could not save. If 'permission-denied', publish the updated rules allowing the sickLeaveDoc field.");
       }
-
       return;
     }
+    try { await applyStatus(activeModalDocId, newStatus); closeModal(); }
+    catch (err) { console.error("Failed to update status:", err); alert("Could not save the status change. If 'permission-denied', publish the updated rules."); }
+  }))
 
-    try {
-      await applyStatus(activeModalDocId, newStatus);
-      closeModal();
-    } catch (err) {
-      console.error("Failed to update status:", err);
-      alert("Could not save the status change. If 'permission-denied', publish the updated rules.");
-    }
-  })
-);
-   } 
   // ----- Compliance modal logic -----
   let modalCompliance = {};
   function switchModalTab(tab) {
