@@ -98,6 +98,7 @@
   body:not(.role-admin) .admin-tab-only { display:none !important; }  /* Compliance + Revenue: admins only */
   body.role-homecare .staff-only { display:none !important; }  /* staff-only areas hidden from homecare */
   body.role-homecare .viewer-only { display:none !important; } /* homecare gets its own minimal UI, not the viewer note */
+  body.role-homecare .hc-hide { display:none !important; }     /* homecare: only the Sick Leave status button */
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
   .kpi .k-label { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); white-space:nowrap; }
   .kpi .k-val { font-size:19px; font-weight:700; line-height:1.1; }
@@ -235,6 +236,7 @@
         <div>
           <h1 class="text-lg md:text-xl font-bold leading-tight">Home Care Calendar</h1>
           <p class="text-xs muted2 mt-0.5" id="subtitle">Live operational view</p>
+          <span id="cobrand-badge" class="hidden inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style="background:rgba(246,189,34,0.16);color:var(--gold-dark);border:1px solid rgba(246,189,34,0.35)"></span>
         </div>
          <div class="flex items-center gap-2 mr-1 staff-only">
           <div class="view-tabs inline-flex items-center gap-1">
@@ -449,12 +451,12 @@
       <div class="status-set-block">
         <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-2">Set status</p>
         <div class="grid grid-cols-2 gap-2">
-          <button data-status="Attended" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">&#10003; Attended</button>
-          <button data-status="Absent" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100">&#10005; Absent</button>
+          <button data-status="Attended" class="modal-status-btn hc-hide px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">&#10003; Attended</button>
+          <button data-status="Absent" class="modal-status-btn hc-hide px-3 py-2 rounded-lg text-sm font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100">&#10005; Absent</button>
           <button data-status="Sick Leave" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100">&#9888; Sick Leave</button>
-          <button data-status="No Show" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100">&#8856; No Show</button>
+          <button data-status="No Show" class="modal-status-btn hc-hide px-3 py-2 rounded-lg text-sm font-semibold bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100">&#8856; No Show</button>
         </div> 
-        <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
+        <button data-status="Pending" class="modal-status-btn hc-hide w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
         <a id="modal-sick-doc" target="_blank" rel="noopener noreferrer" class="hidden block text-center mt-2 text-xs underline" style="color:var(--gold-dark)">&#128206; View sick-leave report</a>
       </div>
       <p class="viewer-only text-xs muted2 italic">Sick Leave requires a link to the medical report before it can be set.</p>
@@ -2303,13 +2305,14 @@ function setTabLoading(containerId, on) {
     periodCache.clear();
   }
   const isValidUrl = u => /^https?:\/\/.+/i.test(String(u || "").trim());
+  const isDriveUrl = u => /^https?:\/\/(drive|docs)\.google\.com\//i.test(String(u || "").trim());
   document.querySelectorAll(".modal-status-btn").forEach(btn => btn.addEventListener("click", async () => {
     if (!activeModalDocId || !(isStaff || isHomecare)) return;
     const newStatus = btn.getAttribute("data-status");
     if (newStatus === "Sick Leave") {
-      const link = (prompt("Paste the link to the sick-leave / medical report (Google Drive, etc.):", "") || "").trim();
+      const link = (prompt("Paste the Google Drive link to the sick-leave / medical report:", "") || "").trim();
       if (!link) return;
-      if (!isValidUrl(link)) { alert("That doesn't look like a valid link. It must start with http:// or https://"); return; }
+      if (!isDriveUrl(link)) { alert("The sick-leave report must be a Google Drive link (drive.google.com or docs.google.com)."); return; }
       try {
         await applyStatus(activeModalDocId, "Sick Leave", {
           sickLeaveDoc: { url: link, addedBy: currentUserEmail, addedAt: new Date().toISOString() }
@@ -3061,6 +3064,9 @@ function setTabLoading(containerId, on) {
       so.classList.remove("hidden");
       const roleLabel = isAdmin ? "admin" : (isStaff ? "support" : ("homecare" + (currentAgency ? " · " + currentAgency : "")));
       so.title = "Sign out (" + (user.email || "") + " · " + roleLabel + ")";
+      // Header co-brand badge: homecare partners see "Valeo <> {partner}".
+      { const cb = document.getElementById("cobrand-badge");
+        if (cb) { if (isHomecare && currentAgency) { cb.textContent = "Valeo \u2194 " + currentAgency; cb.classList.remove("hidden"); } else cb.classList.add("hidden"); } }
       if (isHomecare && !currentAgency) {
         // A non-staff email with no agency mapping: deny rather than leak all data.
         loginError.textContent = "This account isn't linked to a home care partner yet. Please contact Valeo ops.";
