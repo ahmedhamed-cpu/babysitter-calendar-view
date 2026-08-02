@@ -446,7 +446,7 @@
         <div class="flex justify-between"><span>Current status</span><span class="font-semibold" id="modal-current-status">&mdash;</span></div>
         <div class="flex justify-between"><span>Last updated</span><span class="text-xs" id="modal-updated">&mdash;</span></div>
       </div>
-      <div class="admin-only">
+      <div class="status-set-block">
         <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-2">Set status</p>
         <div class="grid grid-cols-2 gap-2">
           <button data-status="Attended" class="modal-status-btn px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">&#10003; Attended</button>
@@ -457,7 +457,7 @@
         <button data-status="Pending" class="modal-status-btn w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium border brd muted hover:opacity-70">Reset to Pending</button>
         <a id="modal-sick-doc" target="_blank" rel="noopener noreferrer" class="hidden block text-center mt-2 text-xs underline" style="color:var(--gold-dark)">&#128206; View sick-leave report</a>
       </div>
-      <p class="viewer-only text-xs muted2 italic">View-only access — marking attendance and status is limited to admins.</p>
+      <p class="viewer-only text-xs muted2 italic">Sick Leave requires a link to the medical report before it can be set.</p>
 
       <div id="modal-locations" class="mt-4 grid grid-cols-2 gap-2">
         <a id="modal-client-loc" target="_blank" rel="noopener noreferrer" class="hidden col-span-2 block text-center px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127968; Client location &amp; ETA</a>
@@ -2304,7 +2304,7 @@ function setTabLoading(containerId, on) {
   }
   const isValidUrl = u => /^https?:\/\/.+/i.test(String(u || "").trim());
   document.querySelectorAll(".modal-status-btn").forEach(btn => btn.addEventListener("click", async () => {
-    if (!activeModalDocId || !isAdmin) return;
+    if (!activeModalDocId || !(isStaff || isHomecare)) return;
     const newStatus = btn.getAttribute("data-status");
     if (newStatus === "Sick Leave") {
       const link = (prompt("Paste the link to the sick-leave / medical report (Google Drive, etc.):", "") || "").trim();
