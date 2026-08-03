@@ -310,6 +310,7 @@
     </div>
     <input id="search-input" type="text" placeholder="Search customer or nurse&hellip;" class="icon-input h-9 px-3 rounded-lg border brd text-sm w-56" />
     <select id="pkg-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All packages</option></select>
+    <select id="b2b-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All B2B partners</option></select>
     <select id="eng-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm">
       <option value="">All engagements</option>
       <option value="Monthly">Monthly</option>
@@ -624,6 +625,7 @@
     customer:    ["User_Name","User Name","UserName","customerName","Customer Name","Customer","Client","Patient Name"],
     customerPhone: ["Phone Number","Phone","phone","Customer Phone","customerPhone","Mobile","mobile","Contact Number","Phone No","phone_no"],
     pkg:         ["Package Name","Package Type 2","Package","packageName","Service","Package Type"],
+    orderId:     ["orderId","Child Order ID","Order ID","order_id","docId"],
     homecare:    ["Home Care","HomeCare","Home_Care","Home Care Name","HomeCareName","homeCare","Agency","Partner","Home Care Partner","Provider","Vendor"],
     city:        ["City","city","Emirate","emirate","Area","area","Location","location","Region","region","Zone","zone"],
     bookingType: ["Booking Type","BookingType","Booking_Type","bookingType","Babysitter Type","Booking Frequency","Frequency","Engagement","Engagement Type","Plan","Subscription","Recurrence","Daily/Monthly","Type"],
@@ -1179,7 +1181,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   let activeModalDocId = null;
   let activeModalBooking = null;
   let viewMode = "day";
-  let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "";
+  let searchText = "", pkgFilter = "", engFilter = "", hcFilter = "", cityFilter = "", b2bFilter = "";
    let catMajor = "babysitting", catSub = "";   // staff category filter; homecare forced to babysitting
   let bucketFilter = "all";                     // Utilisation/Revenue: "all" | "babysitting" | "medical"
   function passBucket(d) {
@@ -1303,6 +1305,7 @@ function setTabLoading(containerId, on) {
     const nurse = fieldVal(d, FIELD.nurseName) || "";
     if (!isActive(nurse)) return false; // deactivated babysitters hidden
     if (pkgFilter && String(fieldVal(d, FIELD.pkg) || "") !== pkgFilter) return false;
+    if (b2bFilter && String(fieldVal(d, FIELD.b2bPartner) || "").trim() !== b2bFilter) return false;
     if (hcFilter) { const ag = agencyOf(nurse) || canonAgency(fieldVal(d, FIELD.homecare)); if (ag !== hcFilter) return false; }
     if (cityFilter) { const ct = cityOf(nurse) || String(fieldVal(d, FIELD.city) || ""); if (ct !== cityFilter) return false; }
     if (searchText) {
@@ -1383,7 +1386,9 @@ function setTabLoading(containerId, on) {
     return map;
   }
   const homeCareOf = name => { const u = bsUniverse[idKey(name)]; if (u && u.agency) return u.agency; const m = nurseMeta[idKey(name)]; return m ? canonAgency(m.homecare) : ""; };
-  const engagementOf = name => engagementMap[idKey(name)] || "Available";
+  // Engagement (Monthly/Weekly/Daily) is now set MANUALLY per babysitter and stored
+  // on the babysitters doc. Read it from there; default to "Available" when unset.
+  const engagementOf = name => { const d = babysitterDocs[idKey(name)]; return (d && d.engagement) || "Available"; };
   const agencyOf = name => { const u = bsUniverse[idKey(name)]; return (u && u.agency) || ""; };
   const cityOf = name => { const u = bsUniverse[idKey(name)]; return (u && u.city) || ""; };
 
@@ -1461,10 +1466,19 @@ function setTabLoading(containerId, on) {
     if (sel.getAttribute("data-sig") !== html) { const cur = sel.value; sel.innerHTML = html; sel.setAttribute("data-sig", html); sel.value = values.has(cur) ? cur : ""; }
   }
   function populateFilters() {
-    const pkgs = new Set(), ags = new Set(), cities = new Set();
-    allBookings.forEach(b => { const p = fieldVal(b.data, FIELD.pkg); if (p) pkgs.add(String(p)); const c = fieldVal(b.data, FIELD.city); if (c) cities.add(String(c)); });
+    const pkgs = new Set(), ags = new Set(), cities = new Set(), b2bs = new Set();
+    // A "real" package name: non-empty, not a long biomarker panel (skip if >=3 commas or very long).
+    const isRealPkg = s => { s = String(s||"").trim(); return s && (s.match(/,/g)||[]).length < 3 && s.length <= 60; };
+    allBookings.forEach(b => {
+      const c = fieldVal(b.data, FIELD.city); if (c) cities.add(String(c));
+      const bp = fieldVal(b.data, FIELD.b2bPartner); if (bp && String(bp).trim()) b2bs.add(String(bp).trim());
+      // Packages are shown ONLY for the currently-viewed category (medical vs babysitting).
+      if (!passCategory(b.data)) return;
+      const p = fieldVal(b.data, FIELD.pkg); if (isRealPkg(p)) pkgs.add(String(p).trim());
+    });
     Object.values(bsUniverse).forEach(u => { if (u.agency) ags.add(u.agency); if (u.city) cities.add(u.city); });
     populateSelect("pkg-filter", pkgs, "All packages");
+    populateSelect("b2b-filter", b2bs, "All B2B partners");
     populateSelect("hc-filter", ags, "All agencies");
     populateSelect("city-filter", cities, "All cities");
   }
@@ -1501,7 +1515,7 @@ function setTabLoading(containerId, on) {
   // ---------- DISPATCH ----------
   function renderGrid() {
     const refDk = viewMode === "day" ? datePicker.value : (viewMode === "week" ? (currentDayKeys()[0] || todayStr()) : (rangeFrom.value || todayStr()));
-    engagementMap = classifyAll(refDk);
+    // engagementMap = classifyAll(refDk);  // tags are now manual, not auto-derived
     nurseMeta = buildNurseMeta();
     bsUniverse = babysitterUniverse();
     populateFilters();
@@ -2113,7 +2127,16 @@ function setTabLoading(containerId, on) {
     // group by agency, split by city (so Helpful agency separates Riyadh / Jeddah; Tamaam HC stays as one)
     const groupKeyOf = u => (u.agency || "Unassigned agency") + (u.city ? " · " + u.city : "");
     const dndOn = !searchText && isAdmin; // reordering only on the full list, admins only
-    const groups = {}; list.forEach(u => { const k = groupKeyOf(u); (groups[k]=groups[k]||[]).push(u); });
+    // Unify duplicate babysitter profiles: collapse names that normalize to the same
+    // person, keeping the ACTIVE one visible. Hidden duplicates still feed Utilisation
+    // and Revenue (those aggregate over all bookings, not this list).
+    const looseKey = n => String(n||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim().split(" ").filter(Boolean).sort().join(" ");
+    const bestByLoose = {};
+    const score = x => (x.active?2:0) + (x.order!=null?1:0);
+    list.forEach(u => { const k = looseKey(u.name); const prev = bestByLoose[k];
+      if (!prev || score(u) > score(prev)) bestByLoose[k] = u; });
+    const dedupList = Object.values(bestByLoose);
+    const groups = {}; dedupList.forEach(u => { const k = groupKeyOf(u); (groups[k]=groups[k]||[]).push(u); });
     const grip = `<span class="prof-grip shrink-0" title="Drag to reorder" aria-hidden="true"><svg width="10" height="16" viewBox="0 0 10 16"><g fill="currentColor"><circle cx="2.5" cy="3" r="1.3"/><circle cx="7.5" cy="3" r="1.3"/><circle cx="2.5" cy="8" r="1.3"/><circle cx="7.5" cy="8" r="1.3"/><circle cx="2.5" cy="13" r="1.3"/><circle cx="7.5" cy="13" r="1.3"/></g></svg></span>`;
     let html = "";
     Object.keys(groups).sort().forEach(gkey => {
@@ -2128,7 +2151,11 @@ function setTabLoading(containerId, on) {
       groups[gkey].forEach(u => {
         const eng = engagementOf(u.name), ec = ENG_COLOR[eng];
         const iqColor = /active/i.test(u.iqama) ? "#10b981" : (/expired/i.test(u.iqama) ? "#ef4444" : "#94a3b8");
-        const currentBadge = `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>`;
+        const canEditEng = isAdmin || isStaff || (isHomecare && (u.agency||"").toLowerCase() === (currentAgency||"").toLowerCase());
+        const engOpts = ["Available","Monthly","Weekly","Daily"].map(o => `<option value="${o}"${o===eng?" selected":""}>${o}</option>`).join("");
+        const currentBadge = canEditEng
+          ? `<select class="eng-select text-[10px] font-bold rounded-full px-1.5 py-0.5 border-0 cursor-pointer" style="background:${hexA(ec,0.16)};color:${ec}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" title="Set capacity tag">${engOpts}</select>`
+          : `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>`;
         const iqamaBadge = u.iqama ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(iqColor,0.16)};color:${iqColor}" title="Iqama status">${escapeHtml(u.iqama)}</span>` : "";
         html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}" draggable="${dndOn}" data-group="${escapeHtml(gkey)}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}">
           ${dndOn ? grip : ""}
@@ -2165,6 +2192,23 @@ function setTabLoading(containerId, on) {
         console.error("Failed to save profile:", err);
         sw.setAttribute("data-on", String(!next));
         alert("Could not save the on/off state.\nIf this says 'permission-denied', the Firestore rules need to allow this write.");
+      }
+    }));
+
+    // Manual capacity tag (Monthly/Weekly/Daily) — shared across all users in real time.
+    document.querySelectorAll("#profiles-list .eng-select").forEach(sel => sel.addEventListener("change", async () => {
+      if (!(isAdmin || isStaff || isHomecare)) return;
+      if (isHomecare && (sel.getAttribute("data-agency")||"").toLowerCase() !== (currentAgency||"").toLowerCase()) return;
+      const val = sel.value;
+      const writeAgency = isHomecare && currentAgency ? currentAgency : sel.getAttribute("data-agency");
+      const ec = ENG_COLOR[val] || "#94a3b8";
+      sel.style.background = hexA(ec,0.16); sel.style.color = ec; // optimistic
+      try {
+        await setDoc(doc(db, "babysitters", sel.getAttribute("data-slug")),
+          { name: sel.getAttribute("data-name"), agency: writeAgency, city: sel.getAttribute("data-city"), engagement: val }, { merge: true });
+      } catch (err) {
+        console.error("Failed to save capacity tag:", err);
+        alert("Could not save the capacity tag.\nIf this says 'permission-denied', the Firestore rules need to allow this write.");
       }
     }));
 
@@ -2538,6 +2582,7 @@ function setTabLoading(containerId, on) {
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
+  document.getElementById("b2b-filter").addEventListener("change", e => { b2bFilter = e.target.value; renderGrid(); });
   document.getElementById("eng-filter").addEventListener("change", e => { engFilter = e.target.value; renderGrid(); });
   document.getElementById("hc-filter").addEventListener("change", e => { hcFilter = e.target.value; renderGrid(); });
   document.getElementById("city-filter").addEventListener("change", e => { cityFilter = e.target.value; renderGrid(); });
@@ -2894,8 +2939,16 @@ function setTabLoading(containerId, on) {
         const nurse = String(fieldVal(data, FIELD.nurseName) || "").trim();
         const hasNurse = nurse !== "" && nurse.toLowerCase() !== "unassigned";
         if (!hasNurse && normStatus(data.status) === "Pending" && !_comp) return; // keep compliance-only rows
-        if (seen.has(rec.id)) return; seen.add(rec.id);
-        out.push({ id: rec.id, data });
+        // Dedupe by ORDER ID (a single order can be synced as >1 doc with different
+        // doc-ids). Keep the freshest by syncRun so counts match real order counts.
+        const _ok = String(fieldVal(data, FIELD.orderId) || rec.id).trim();
+        if (seen.has(_ok)) {
+          const pi = out.findIndex(o => o._ok === _ok);
+          if (pi >= 0 && Number(data.syncRun||0) >= Number(out[pi].data.syncRun||0)) out[pi] = { id: rec.id, data, _ok };
+          return;
+        }
+        seen.add(_ok);
+        out.push({ id: rec.id, data, _ok });
       });
       allBookings = out;
       bookingById.clear(); out.forEach(b => bookingById.set(b.id, b));
