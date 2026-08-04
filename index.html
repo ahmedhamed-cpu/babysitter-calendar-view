@@ -1068,10 +1068,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   }
   const fmtSAR = n => (n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " SAR");
   const monthKeyOf = dt => dt ? dt.getUTCFullYear() + "-" + String(dt.getUTCMonth() + 1).padStart(2, "0") : "";
-  function engBadge(name) {
-    const e = engagementOf(name), c = ENG_COLOR[e];
-    return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(c,0.16)};color:${c}">${e}</span>`;
-  }
+  function engBadge(name) { return engSelectHTML(name); }
 
   // ---------- TIME ZONE (Asia/Riyadh, fixed UTC+3, no DST) ----------
   // Convention: Date objects carry Riyadh wall-clock in their UTC fields.
@@ -1386,9 +1383,51 @@ function setTabLoading(containerId, on) {
     return map;
   }
   const homeCareOf = name => { const u = bsUniverse[idKey(name)]; if (u && u.agency) return u.agency; const m = nurseMeta[idKey(name)]; return m ? canonAgency(m.homecare) : ""; };
-  // Engagement (Monthly/Weekly/Daily) is now set MANUALLY per babysitter and stored
-  // on the babysitters doc. Read it from there; default to "Available" when unset.
-  const engagementOf = name => { const d = babysitterDocs[idKey(name)]; return (d && d.engagement) || "Available"; };
+  // Engagement (capacity tag) is AUTO-derived from each babysitter's actual booking
+  // package tier (the source "Booking Type" / bookingDurationTier), which is the most
+  // accurate signal. A MANUAL override always wins when set (engagementManual === true),
+  // so users can correct it. Selecting "Auto" clears the override and reverts to derived.
+  function tierToTag(raw) {
+    const t = String(raw || "").toLowerCase();
+    if (t.includes("month")) return "Monthly";
+    if (t.includes("week"))  return "Weekly";
+    if (t.includes("day") || t.includes("daily") || t.includes("hour") || t.includes("one")) return "Daily";
+    return "";
+  }
+  function autoEngagement(name) {
+    const key = idKey(name);
+    const now = nowR().getTime();
+    let best = null, bestDist = Infinity;
+    allBookings.forEach(b => {
+      if (idKey(fieldVal(b.data, FIELD.nurseName) || "") !== key) return;
+      const dt = parseSlotDateTime(b.data); if (!dt) return;
+      const dist = Math.abs(dt.getTime() - now);
+      if (dist < bestDist) { bestDist = dist; best = b; }        // booking nearest to today
+    });
+    if (!best) return "";
+    return tierToTag(fieldVal(best.data, FIELD.bookingType) || best.data.bookingDurationTier);
+  }
+  const engagementOf = name => {
+    const d = babysitterDocs[idKey(name)];
+    if (d && d.engagementManual && d.engagement) return d.engagement;   // manual override wins
+    return autoEngagement(name) || (d && d.engagement) || "Available";  // else accurate auto
+  };
+  // Shared editable capacity-tag control (calendar row labels + Profiles). Non-editors see a badge.
+  function canEditEngFor(agency) {
+    return isAdmin || isStaff || (isHomecare && String(agency||"").toLowerCase() === String(currentAgency||"").toLowerCase());
+  }
+  function engSelectHTML(name) {
+    const eff = engagementOf(name), c = ENG_COLOR[eff] || "#94a3b8";
+    const u = bsUniverse[idKey(name)] || {};
+    if (!canEditEngFor(u.agency)) {
+      return `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(c,0.16)};color:${c}">${eff}</span>`;
+    }
+    const auto = autoEngagement(name) || "Available";
+    const slug = u.slug || idKey(name);
+    const opts = ["Available","Monthly","Weekly","Daily"].map(o => `<option value="${o}"${o===eff?" selected":""}>${o}</option>`).join("")
+      + `<option value="__auto">\u21ba Auto (${auto})</option>`;
+    return `<select class="eng-tag-select text-[9px] font-bold rounded-full px-1 py-0.5 border-0 cursor-pointer" style="background:${hexA(c,0.16)};color:${c}" data-slug="${slug}" data-name="${escapeHtml(name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" onclick="event.stopPropagation()" title="Capacity tag — auto-derived from package; pick a value to override, or Auto to revert">${opts}</select>`;
+  }
   const agencyOf = name => { const u = bsUniverse[idKey(name)]; return (u && u.agency) || ""; };
   const cityOf = name => { const u = bsUniverse[idKey(name)]; return (u && u.city) || ""; };
 
@@ -2151,11 +2190,7 @@ function setTabLoading(containerId, on) {
       groups[gkey].forEach(u => {
         const eng = engagementOf(u.name), ec = ENG_COLOR[eng];
         const iqColor = /active/i.test(u.iqama) ? "#10b981" : (/expired/i.test(u.iqama) ? "#ef4444" : "#94a3b8");
-        const canEditEng = isAdmin || isStaff || (isHomecare && (u.agency||"").toLowerCase() === (currentAgency||"").toLowerCase());
-        const engOpts = ["Available","Monthly","Weekly","Daily"].map(o => `<option value="${o}"${o===eng?" selected":""}>${o}</option>`).join("");
-        const currentBadge = canEditEng
-          ? `<select class="eng-select text-[10px] font-bold rounded-full px-1.5 py-0.5 border-0 cursor-pointer" style="background:${hexA(ec,0.16)};color:${ec}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" title="Set capacity tag">${engOpts}</select>`
-          : `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>`;
+        const currentBadge = engSelectHTML(u.name);
         const iqamaBadge = u.iqama ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(iqColor,0.16)};color:${iqColor}" title="Iqama status">${escapeHtml(u.iqama)}</span>` : "";
         html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}" draggable="${dndOn}" data-group="${escapeHtml(gkey)}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}">
           ${dndOn ? grip : ""}
@@ -2192,23 +2227,6 @@ function setTabLoading(containerId, on) {
         console.error("Failed to save profile:", err);
         sw.setAttribute("data-on", String(!next));
         alert("Could not save the on/off state.\nIf this says 'permission-denied', the Firestore rules need to allow this write.");
-      }
-    }));
-
-    // Manual capacity tag (Monthly/Weekly/Daily) — shared across all users in real time.
-    document.querySelectorAll("#profiles-list .eng-select").forEach(sel => sel.addEventListener("change", async () => {
-      if (!(isAdmin || isStaff || isHomecare)) return;
-      if (isHomecare && (sel.getAttribute("data-agency")||"").toLowerCase() !== (currentAgency||"").toLowerCase()) return;
-      const val = sel.value;
-      const writeAgency = isHomecare && currentAgency ? currentAgency : sel.getAttribute("data-agency");
-      const ec = ENG_COLOR[val] || "#94a3b8";
-      sel.style.background = hexA(ec,0.16); sel.style.color = ec; // optimistic
-      try {
-        await setDoc(doc(db, "babysitters", sel.getAttribute("data-slug")),
-          { name: sel.getAttribute("data-name"), agency: writeAgency, city: sel.getAttribute("data-city"), engagement: val }, { merge: true });
-      } catch (err) {
-        console.error("Failed to save capacity tag:", err);
-        alert("Could not save the capacity tag.\nIf this says 'permission-denied', the Firestore rules need to allow this write.");
       }
     }));
 
@@ -2583,6 +2601,29 @@ function setTabLoading(containerId, on) {
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
   document.getElementById("b2b-filter").addEventListener("change", e => { b2bFilter = e.target.value; renderGrid(); });
+
+  // Capacity-tag editing (calendar row labels + Profiles) — one delegated handler.
+  // Picking a value sets a MANUAL override; picking "Auto" reverts to the derived tag.
+  document.addEventListener("change", async (e) => {
+    const sel = e.target && e.target.closest ? e.target.closest(".eng-tag-select") : null;
+    if (!sel) return;
+    if (!(isAdmin || isStaff || isHomecare)) return;
+    if (isHomecare && (sel.getAttribute("data-agency")||"").toLowerCase() !== (currentAgency||"").toLowerCase()) return;
+    const raw = sel.value;
+    const isAuto = raw === "__auto";
+    const val = isAuto ? "" : raw;
+    const writeAgency = isHomecare && currentAgency ? currentAgency : sel.getAttribute("data-agency");
+    const payload = isAuto
+      ? { name: sel.getAttribute("data-name"), agency: writeAgency, city: sel.getAttribute("data-city"), engagementManual: false }
+      : { name: sel.getAttribute("data-name"), agency: writeAgency, city: sel.getAttribute("data-city"), engagement: val, engagementManual: true };
+    try {
+      await setDoc(doc(db, "babysitters", sel.getAttribute("data-slug")), payload, { merge: true });
+      renderGrid(); // reflect new tag everywhere immediately
+    } catch (err) {
+      console.error("Failed to save capacity tag:", err);
+      alert("Could not save the capacity tag.\nIf this says 'permission-denied', the Firestore rules need to allow this write.");
+    }
+  });
   document.getElementById("eng-filter").addEventListener("change", e => { engFilter = e.target.value; renderGrid(); });
   document.getElementById("hc-filter").addEventListener("change", e => { hcFilter = e.target.value; renderGrid(); });
   document.getElementById("city-filter").addEventListener("change", e => { cityFilter = e.target.value; renderGrid(); });
