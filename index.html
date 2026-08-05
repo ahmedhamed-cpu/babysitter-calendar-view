@@ -99,6 +99,8 @@
   body.role-homecare .staff-only { display:none !important; }  /* staff-only areas hidden from homecare */
   body.role-homecare .viewer-only { display:none !important; } /* homecare gets its own minimal UI, not the viewer note */
   body.role-homecare .hc-hide { display:none !important; }     /* homecare: only the Sick Leave status button */
+  @keyframes cobrandPulse { 0%,100% { box-shadow:0 0 0 0 rgba(246,189,34,0.45); } 50% { box-shadow:0 0 0 6px rgba(246,189,34,0); } }
+  #cobrand-badge:not(.hidden) { animation: cobrandPulse 2s ease-in-out infinite; }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
   .kpi .k-label { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); white-space:nowrap; }
   .kpi .k-val { font-size:19px; font-weight:700; line-height:1.1; }
@@ -448,6 +450,10 @@
         <div class="flex justify-between"><span>Booking type</span><span id="modal-btype" class="text-right">&mdash;</span></div>
         <div class="flex justify-between"><span>Current status</span><span class="font-semibold" id="modal-current-status">&mdash;</span></div>
         <div class="flex justify-between"><span>Last updated</span><span class="text-xs" id="modal-updated">&mdash;</span></div>
+      </div>
+      <div id="modal-flag" class="hidden mb-3 p-3 rounded-lg text-sm" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35)">
+        <div class="font-semibold mb-1" style="color:#ef4444">&#9888; Needs attention</div>
+        <ul id="modal-flag-list" class="list-disc pl-5 space-y-0.5" style="color:var(--text-2)"></ul>
       </div>
       <div class="status-set-block">
         <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-2">Set status</p>
@@ -1223,6 +1229,24 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
     if (s === "Pending" && (hasAppLogin(d) || orderAttended(d))) return "Attended";
     return s;
   }
+
+  // Reasons a booking needs attention — shown in the modal so users understand the flag.
+  function flagReasons(d) {
+    const out = [];
+    const st = effStatus(d);
+    const dt = parseSlotDateTime(d);
+    const nurse = String(fieldVal(d, FIELD.nurseName) || "").trim();
+    if (!nurse || nurse.toLowerCase() === "unassigned") out.push("No babysitter assigned to this booking.");
+    if (!dt) out.push("Booked slot date/time is missing or unreadable.");
+    if (st === "Pending" && dt && dt < nowR()) out.push("Shift start time has passed but attendance is still Pending — the babysitter has not logged in.");
+    if (st === "Pending" && !hasAppLogin(d) && dt && dt < nowR()) out.push("No app login recorded for this shift.");
+    if (st === "No Show") out.push("Marked No Show — babysitter did not attend.");
+    if (st === "Absent") out.push("Marked Absent.");
+    if (st === "Sick Leave" && !(d.sickLeaveDoc && d.sickLeaveDoc.url)) out.push("Sick Leave set without a medical report link.");
+    const t = fieldVal(d, FIELD.slotTime);
+    if (dt && (t == null || String(t).trim() === "")) out.push("Slot time is empty — duration/placement may be inaccurate.");
+    return out;
+  }
   const isAutoAttended = d => {
     if ((d.adminStatus != null && d.adminStatus !== "") || d.statusSource === "dashboard") return false;  // admin-set, not auto
     return d.attendanceSource === "app-login" || (normStatus(d.status) === "Pending" && (hasAppLogin(d) || orderAttended(d)));
@@ -1510,7 +1534,12 @@ function setTabLoading(containerId, on) {
     const isRealPkg = s => { s = String(s||"").trim(); return s && (s.match(/,/g)||[]).length < 3 && s.length <= 60; };
     allBookings.forEach(b => {
       const c = fieldVal(b.data, FIELD.city); if (c) cities.add(String(c));
-      const bp = fieldVal(b.data, FIELD.b2bPartner); if (bp && String(bp).trim()) b2bs.add(String(bp).trim());
+      const bp = fieldVal(b.data, FIELD.b2bPartner);
+      if (bp && String(bp).trim()) {
+        const bpv = String(bp).trim();
+        // Helpful Agency homecare only works Mumzworld B2B — restrict their filter to it.
+        if (!(isHomecare && /helpful/i.test(currentAgency||"")) || /mumzworld/i.test(bpv)) b2bs.add(bpv);
+      }
       // Packages are shown ONLY for the currently-viewed category (medical vs babysitting).
       if (!passCategory(b.data)) return;
       const p = fieldVal(b.data, FIELD.pkg); if (isRealPkg(p)) pkgs.add(String(p).trim());
@@ -2344,6 +2373,15 @@ function setTabLoading(containerId, on) {
     if (_stEl) _stEl.value = modalCompliance.selfieTimestamp || "";
     updateComplianceBadge();
     renderComplianceReadonly(d);
+    // Once attended (manually or auto via app login), hide the Attended button.
+    { const st = effStatus(d);
+      const atBtn = document.querySelector('.modal-status-btn[data-status="Attended"]');
+      if (atBtn) atBtn.style.display = (st === "Attended") ? "none" : ""; }
+    // Explain WHY this booking is flagged for attention.
+    { const reasons = flagReasons(d);
+      const box = document.getElementById("modal-flag"), list = document.getElementById("modal-flag-list");
+      if (reasons.length) { list.innerHTML = reasons.map(r => `<li>${escapeHtml(r)}</li>`).join(""); box.classList.remove("hidden"); }
+      else box.classList.add("hidden"); }
     switchModalTab("status");
     modal.classList.remove("hidden");
   }
@@ -3038,7 +3076,7 @@ function setTabLoading(containerId, on) {
       : collection(db, "babysitters");
     onSnapshot(rosterSource, (snap) => {
       const m = {};
-      snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false, order: typeof x.order === "number" ? x.order : undefined }; });
+      snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false, order: typeof x.order === "number" ? x.order : undefined, engagement: x.engagement||"", engagementManual: x.engagementManual === true }; });
       babysitterDocs = m;
       rebuildNameIndex();
       renderGrid();
