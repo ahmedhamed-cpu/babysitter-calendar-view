@@ -2738,27 +2738,45 @@ function setTabLoading(containerId, on) {
     const btn = document.getElementById("sync-btn");
     const icon = document.getElementById("sync-icon");
     const label = document.getElementById("sync-label");
+    const before = lastSyncRunMs;                      // remember current freshness
     btn.disabled = true; syncCooldownUntil = Date.now() + SYNC_COOLDOWN_MS;
     icon.style.animation = "bs-spin 1s linear infinite";
     label.textContent = "Syncing…";
     setSyncDot("syncing");
-    // Fire both webhooks in parallel. no-cors avoids CORS preflight on n8n cloud;
-    // we don't read the response — proof of success is syncRun bumping in Firestore.
     const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => { console.warn("sync webhook:", url, err); throw err; });
-    let ok = true;
+    let fired = true;
     try { await Promise.all([kick(SYNC_WEBHOOKS.upsert), kick(SYNC_WEBHOOKS.del), kick(SYNC_WEBHOOKS.compliance)]); }
-    catch (e) { ok = false; console.error("sync trigger failed:", e); }
-    label.textContent = ok ? "Requested…" : "Failed";
-    if (!ok) setSyncDot("error");
-    setTimeout(() => {
+    catch (e) { fired = false; console.error("sync trigger failed:", e); }
+
+    const finish = (state, text) => {
       btn.disabled = false;
       icon.style.animation = "";
-      label.textContent = "Sync now";
-      // Clear transient states; updateSyncStamp will restore green/amber by freshness.
       const dot = document.getElementById("sync-dot");
       if (dot) dot.classList.remove("syncing","error");
-      updateSyncStamp(0);
-    }, SYNC_COOLDOWN_MS);
+      setSyncDot(state);
+      label.textContent = text;
+      // after a moment, restore the neutral "Sync now" label
+      setTimeout(() => { label.textContent = "Sync now"; updateSyncStamp(0); }, 6000);
+    };
+
+    if (!fired) { finish("error", "Failed"); return; }
+
+    // Watch Firestore: the live bookings listener bumps lastSyncRunMs when n8n writes.
+    // Poll up to ~40s for a fresh syncRun; confirm success honestly.
+    label.textContent = "Requested…";
+    const started = Date.now();
+    const poll = setInterval(() => {
+      if (lastSyncRunMs > before) {                    // a NEW sync landed
+        clearInterval(poll);
+        const t = new Date(lastSyncRunMs).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
+        finish("", "\u2713 Synced " + t);
+        updateSyncStamp(0);
+      } else if (Date.now() - started > 40000) {       // no confirmation in time
+        clearInterval(poll);
+        finish("stale", "Sent \u2014 no update yet");
+        console.warn("Sync fired but no new syncRun within 40s. Check the n8n webhook workflow is Active and writing to Firestore.");
+      }
+    }, 2500);
   }
 
   // ---------- THEME ----------
