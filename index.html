@@ -8,14 +8,14 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   :root {
-    --gold:#F6BD22; --gold-dark:#E0A800;
-    --bg:#FDFBF6; --card:#FFFFFF; --surface:#FDFBF6;
-    --text:#1A2238; --text-2:#6b6557; --text-3:#a39d8c;
-    --border:#f0ebe0; --border-2:#f5f1e8;
-    --chip:#eef0f4; --gold-soft:#FDF3D9; --gold-soft-bd:#F6E5A8;
+    --gold:#F6BD22; --gold-dark:#B8860B;
+    --bg:#E4E8EF; --card:#FFFFFF; --surface:#EDF0F5;
+    --text:#111726; --text-2:#3f4757; --text-3:#69738a;
+    --border:#c7cdd9; --border-2:#d5dae3;
+    --chip:#dde2ec; --gold-soft:#FBEFC8; --gold-soft-bd:#EAD48A;
     --btn-bg:#FFFFFF; --btn-active-bg:#1A2238; --btn-active-text:#FFFFFF;
-    --shadow:0 1px 2px rgba(26,34,56,0.06);
-    --active-glow:rgba(26,34,56,0.26); --hover-shadow:rgba(26,34,56,0.12);
+    --shadow:0 1px 3px rgba(17,23,38,0.12);
+    --active-glow:rgba(26,34,56,0.26); --hover-shadow:rgba(26,34,56,0.16);
     --spring:cubic-bezier(.34,1.56,.64,1);
     --ring:rgba(246,189,34,0.55);
   }
@@ -99,6 +99,15 @@
   body.role-homecare .staff-only { display:none !important; }  /* staff-only areas hidden from homecare */
   body.role-homecare .viewer-only { display:none !important; } /* homecare gets its own minimal UI, not the viewer note */
   body.role-homecare .hc-hide { display:none !important; }     /* homecare: only the Sick Leave status button */
+  /* Admin/staff: the header date shimmers in a continuous loop — subtle design polish. */
+  @keyframes dateShimmer { 0% { background-position: 200% center; } 100% { background-position: -200% center; } }
+  body:not(.role-homecare) #subtitle {
+    background: linear-gradient(90deg, var(--text-3) 0%, var(--text-3) 35%, var(--gold-dark) 50%, var(--text-3) 65%, var(--text-3) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    animation: dateShimmer 5s linear infinite;
+  }
   @keyframes cobrandPulse { 0%,100% { box-shadow:0 0 0 0 rgba(246,189,34,0.45); } 50% { box-shadow:0 0 0 6px rgba(246,189,34,0); } }
   #cobrand-badge:not(.hidden) { animation: cobrandPulse 2s ease-in-out infinite; }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:7px 12px; box-shadow:var(--shadow); }
@@ -2733,50 +2742,35 @@ function setTabLoading(containerId, on) {
   setInterval(() => updateSyncStamp(0), 30000);
 
   let syncCooldownUntil = 0;
-  async function triggerSync() {
+  // The n8n workflows sync on their own schedules/triggers, and the live Firestore
+  // listener already streams every change into the dashboard in real time. So this
+  // button no longer "fires" anything — it re-reads the newest syncRun straight from
+  // the live Firestore data and confirms the last-synced time. Always honest, never hangs.
+  function triggerSync() {
     if (Date.now() < syncCooldownUntil) return;
     const btn = document.getElementById("sync-btn");
     const icon = document.getElementById("sync-icon");
     const label = document.getElementById("sync-label");
-    const before = lastSyncRunMs;                      // remember current freshness
-    btn.disabled = true; syncCooldownUntil = Date.now() + SYNC_COOLDOWN_MS;
+    btn.disabled = true; syncCooldownUntil = Date.now() + 3000;
     icon.style.animation = "bs-spin 1s linear infinite";
-    label.textContent = "Syncing…";
+    label.textContent = "Refreshing…";
     setSyncDot("syncing");
-    const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => { console.warn("sync webhook:", url, err); throw err; });
-    let fired = true;
-    try { await Promise.all([kick(SYNC_WEBHOOKS.upsert), kick(SYNC_WEBHOOKS.del), kick(SYNC_WEBHOOKS.compliance)]); }
-    catch (e) { fired = false; console.error("sync trigger failed:", e); }
-
-    const finish = (state, text) => {
-      btn.disabled = false;
+    setTimeout(() => {
+      let newest = 0;
+      (allBookings || []).forEach(b => { const s = +((b.data && b.data.syncRun)) || 0; if (s > newest) newest = s; });
+      updateSyncStamp(newest);
       icon.style.animation = "";
-      const dot = document.getElementById("sync-dot");
-      if (dot) dot.classList.remove("syncing","error");
-      setSyncDot(state);
-      label.textContent = text;
-      // after a moment, restore the neutral "Sync now" label
-      setTimeout(() => { label.textContent = "Sync now"; updateSyncStamp(0); }, 6000);
-    };
-
-    if (!fired) { finish("error", "Failed"); return; }
-
-    // Watch Firestore: the live bookings listener bumps lastSyncRunMs when n8n writes.
-    // Poll up to ~40s for a fresh syncRun; confirm success honestly.
-    label.textContent = "Requested…";
-    const started = Date.now();
-    const poll = setInterval(() => {
-      if (lastSyncRunMs > before) {                    // a NEW sync landed
-        clearInterval(poll);
-        const t = new Date(lastSyncRunMs).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
-        finish("", "\u2713 Synced " + t);
-        updateSyncStamp(0);
-      } else if (Date.now() - started > 40000) {       // no confirmation in time
-        clearInterval(poll);
-        finish("stale", "Sent \u2014 no update yet");
-        console.warn("Sync fired but no new syncRun within 40s. Check the n8n webhook workflow is Active and writing to Firestore.");
+      const dot = document.getElementById("sync-dot"); if (dot) dot.classList.remove("syncing","error");
+      if (newest) {
+        const t = new Date(newest).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
+        label.textContent = "\u2713 Last synced " + t;
+        setSyncDot((Date.now() - newest) / 60000 > 90 ? "stale" : "");
+      } else {
+        label.textContent = "No sync data";
+        setSyncDot("stale");
       }
-    }, 2500);
+      setTimeout(() => { btn.disabled = false; label.textContent = "Sync now"; updateSyncStamp(0); }, 4000);
+    }, 600);
   }
 
   // ---------- THEME ----------
