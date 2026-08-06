@@ -2430,6 +2430,10 @@ function setTabLoading(containerId, on) {
       const box = document.getElementById("modal-flag"), list = document.getElementById("modal-flag-list");
       if (reasons.length) { list.innerHTML = reasons.map(r => `<li>${escapeHtml(r)}</li>`).join(""); box.classList.remove("hidden"); }
       else box.classList.add("hidden"); }
+    // Reset the "Flag to partner" form so stale notes/messages don't linger across bookings.
+    { const fn = document.getElementById("flag-note"); if (fn) fn.classList.add("hidden");
+      const fm = document.getElementById("flag-message"); if (fm) fm.value = "";
+      const fr = document.getElementById("flag-reason"); if (fr) fr.selectedIndex = 0; }
     switchModalTab("status");
     modal.classList.remove("hidden");
   }
@@ -2831,26 +2835,26 @@ function setTabLoading(containerId, on) {
     const btn = document.getElementById("sync-btn");
     const icon = document.getElementById("sync-icon");
     const label = document.getElementById("sync-label");
-    btn.disabled = true; syncCooldownUntil = Date.now() + 3000;
+    const stamp = document.getElementById("sync-stamp");
+    // Heavier workflow → give it a full minute. Button stays safely disabled meanwhile.
+    btn.disabled = true; syncCooldownUntil = Date.now() + 60000;
     icon.style.animation = "bs-spin 1s linear infinite";
-    label.textContent = "Refreshing…";
+    label.textContent = "Fetching from Meta\u2026";
     setSyncDot("syncing");
+    if (stamp) { stamp.dataset.prev = stamp.innerHTML; stamp.textContent = "Fetching from Meta\u2026 this can take up to a minute"; }
+    // Fire the n8n webhooks (upsert + delete + compliance). no-cors: we don't read the
+    // response; the live Firestore listener reflects the new data when it lands.
+    const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => console.warn("sync webhook:", url, err));
+    kick(SYNC_WEBHOOKS.upsert); kick(SYNC_WEBHOOKS.del); kick(SYNC_WEBHOOKS.compliance);
+    // Keep the spinner + "Fetching" state for the full minute, then reset. If fresh data
+    // arrives sooner, updateSyncStamp (called by the live listener) already updated the pill.
     setTimeout(() => {
-      let newest = 0;
-      (allBookings || []).forEach(b => { const s = +((b.data && b.data.syncRun)) || 0; if (s > newest) newest = s; });
-      updateSyncStamp(newest);
       icon.style.animation = "";
       const dot = document.getElementById("sync-dot"); if (dot) dot.classList.remove("syncing","error");
-      if (newest) {
-        const t = new Date(newest).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
-        label.textContent = "\u2713 Last synced " + t;
-        setSyncDot((Date.now() - newest) / 60000 > 90 ? "stale" : "");
-      } else {
-        label.textContent = "No sync data";
-        setSyncDot("stale");
-      }
-      setTimeout(() => { btn.disabled = false; label.textContent = "Sync now"; updateSyncStamp(0); }, 4000);
-    }, 600);
+      label.textContent = "Sync now";
+      btn.disabled = false;
+      updateSyncStamp(0);   // restore the real "Last sync" line + freshness light
+    }, 60000);
   }
 
   // ---------- THEME ----------
