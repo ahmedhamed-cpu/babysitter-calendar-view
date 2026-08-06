@@ -477,6 +477,19 @@
       </div>
       <p class="viewer-only text-xs muted2 italic">Sick Leave requires a link to the medical report before it can be set.</p>
 
+      <div id="flag-partner-block" class="admin-tab-only mt-4 pt-3" style="border-top:1px solid var(--border)">
+        <p class="text-xs font-semibold muted2 uppercase tracking-wide mb-2">&#128681; Flag to partner</p>
+        <select id="flag-reason" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm mb-2">
+          <option value="Availability check">Availability check</option>
+          <option value="Red flag">Red flag</option>
+          <option value="Complaint on babysitter">Complaint on babysitter</option>
+          <option value="Other">Other</option>
+        </select>
+        <textarea id="flag-message" rows="2" placeholder="Message to the partner about this booking&hellip;" class="icon-input w-full px-2 py-2 rounded-lg border brd text-sm mb-2"></textarea>
+        <button id="flag-send" class="w-full px-3 py-2 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Send to partner</button>
+        <p id="flag-note" class="hidden text-xs mt-1"></p>
+      </div>
+
       <div id="modal-locations" class="mt-4 grid grid-cols-2 gap-2">
         <a id="modal-client-loc" target="_blank" rel="noopener noreferrer" class="hidden col-span-2 block text-center px-3 py-2 rounded-lg text-sm font-semibold border brd hover:opacity-80" style="color:var(--text)">&#127968; Client location &amp; ETA</a>
         <a id="modal-call-nurse" class="hidden block text-center px-3 py-2 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">&#128222; Call nurse</a>
@@ -554,6 +567,7 @@
     <p class="text-sm muted mb-3">Not tied to a booking — routed to the right person automatically.</p>
     <label class="block text-xs font-semibold muted2 uppercase tracking-wide mb-1">Type</label>
     <select id="gticket-type" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3"></select>
+    <select id="gticket-agency" class="hidden icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3"><option value="">Select partner…</option></select>
     <p id="gticket-route-hint" class="text-xs muted2 mb-3 p-2 rounded-lg" style="background:var(--surface);border:1px solid var(--border)">&mdash;</p>
     <label class="block text-xs font-semibold muted2 uppercase tracking-wide mb-1">Priority</label>
     <div id="gticket-priority" class="flex gap-1 mb-3">
@@ -609,6 +623,7 @@
   // Ticketing: dashboard POSTs the ticket here; n8n posts it to Slack (keeps the
   // Slack webhook server-side, out of this page's source).
   const TICKET_WEBHOOK = "https://feelvaleo.app.n8n.cloud/webhook/babysitter-ticket";
+  const ADMIN_NOTIFY_EMAILS = ["ahmed.hamed@feelvaleo.com","karthik.ramachandran@feelvaleo.com","nilesh.pandaya@feelvaleo.com"]; // emailed by n8n on every new ticket
   // Scenarios homecare partners / ops can raise. Edit freely.
   const TICKET_CATEGORIES = [
     "Client not answering / no access",
@@ -657,23 +672,36 @@ const GENERAL_TICKET_TYPES = [
   { label: "New service proposal",                 route: "management", tag: "Karthik" },
   { label: "Uniform requested",                    route: "ops",        tag: "Ahmed & Nilesh" },
   { label: "General ops request",                  route: "ops",        tag: "Ahmed & Nilesh" },
-  { label: "Dashboard technical issue (critical)", route: "tech",       tag: "#channel (critical)" }
+  { label: "Dashboard technical issue (critical)", route: "tech",       tag: "#channel (critical)" },
+  { label: "\u2192 Partner: Availability check",        route: "homecare",   tag: "Partner", toPartner: true },
+  { label: "\u2192 Partner: Red flag",                  route: "homecare",   tag: "Partner", toPartner: true },
+  { label: "\u2192 Partner: Complaint on babysitter",   route: "homecare",   tag: "Partner", toPartner: true }
 ];
 const ROUTE_HINT = {
   management: "Goes to Karthik (senior management).",
   ops: "Goes to Ahmed & Nilesh (ops).",
-  tech: "Critical — alerts the whole ops channel."
+  tech: "Critical — alerts the whole ops channel.",
+  homecare: "Sent to the selected partner — they'll be emailed."
 };
 let gTicketPriority = "Normal";
 const gTicketModal = document.getElementById("gticket-modal");
 function populateGeneralTicketTypes() {
   const sel = document.getElementById("gticket-type");
-  if (sel.options.length) return;
-  sel.innerHTML = GENERAL_TICKET_TYPES.map((t, i) => `<option value="${i}">${escapeHtml(t.label)}</option>`).join("");
+  // Homecare users can't send partner-directed tickets (those are admin -> partner).
+  sel.innerHTML = GENERAL_TICKET_TYPES.map((t, i) => (t.toPartner && !isStaff) ? "" : `<option value="${i}">${escapeHtml(t.label)}</option>`).join("");
+  // Populate the partner picker from known agencies (admins choosing a target partner).
+  const ag = document.getElementById("gticket-agency");
+  if (ag) {
+    const set = new Set();
+    Object.values(bsUniverse || {}).forEach(u => { if (u.agency) set.add(u.agency); });
+    ag.innerHTML = '<option value="">Select partner…</option>' + [...set].sort().map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
+  }
 }
 function updateGRouteHint() {
   const t = GENERAL_TICKET_TYPES[+document.getElementById("gticket-type").value] || GENERAL_TICKET_TYPES[0];
   document.getElementById("gticket-route-hint").textContent = ROUTE_HINT[t.route] + "  ·  Will tag: " + t.tag;
+  const ag = document.getElementById("gticket-agency");
+  if (ag) ag.classList.toggle("hidden", !t.toPartner);
 }
 function openGeneralTicket() {
   populateGeneralTicketTypes();
@@ -709,15 +737,21 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   const nowIso = new Date().toISOString();
   const ticketId = "GEN-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
   const firstMsg = { by: currentUserEmail || "unknown", role: isStaff ? "ops" : "homecare", text: msg, at: nowIso };
-  const homecare = isHomecare && currentAgency ? currentAgency : "";
+  const toPartner = !!type.toPartner;
+  const pickedAgency = (document.getElementById("gticket-agency") || {}).value || "";
+  if (toPartner && !pickedAgency) { err.textContent = "Select which partner this is for."; err.classList.remove("hidden"); btn.disabled = false; btn.textContent = "Submit ticket"; return; }
+  // Partner-directed: target the chosen agency. Otherwise homecare users tag their own agency.
+  const homecare = toPartner ? pickedAgency : (isHomecare && currentAgency ? currentAgency : "");
   const payload = {
     ticketId, kind: "general", category: type.label, route: type.route, tagTarget: type.tag,
-    priority: gTicketPriority, subject, message: msg, homecare,
-    raisedBy: currentUserEmail || "unknown", raisedByRole: currentRole, raisedAt: nowIso
+    direction: toPartner ? "to_homecare" : "to_ops",
+    priority: gTicketPriority, subject, message: msg, homecare, toAgency: toPartner ? pickedAgency : "",
+    raisedBy: currentUserEmail || "unknown", raisedByRole: currentRole, raisedAt: nowIso,
+    notifyAdmins: ADMIN_NOTIFY_EMAILS, notifyHomecare: toPartner
   };
   try {
     await setDoc(doc(db, "tickets", ticketId), {
-      ticketId, kind: "general", orderId: "GENERAL", route: type.route,
+      ticketId, kind: "general", orderId: "GENERAL", route: type.route, direction: toPartner ? "to_homecare" : "to_ops",
       category: type.label, priority: gTicketPriority, subject, status: "open",
       nurse: subject || type.label, client: "—", homecare, city: "",
       createdBy: currentUserEmail || "unknown", createdByRole: currentRole,
@@ -726,6 +760,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
     fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: JSON.stringify(payload) }).catch(() => {});
     document.getElementById("gticket-submit").classList.add("hidden");
     document.getElementById("gticket-success-msg").textContent =
+      toPartner ? (pickedAgency + " has been notified by email.") :
       type.route === "management" ? "Karthik has been tagged on Slack." :
       type.route === "tech" ? "The ops channel has been alerted." :
       "Ahmed & Nilesh have been tagged on Slack.";
@@ -2417,6 +2452,51 @@ function setTabLoading(containerId, on) {
     });
     periodCache.clear();
   }
+
+  // Admin → homecare ticket about THIS booking. Creates a tickets/ doc (direction=to_homecare)
+  // and POSTs to n8n, which emails the partner + notifies admins. Notification list carried in payload.
+  async function sendPartnerFlag() {
+    if (!isAdmin || !activeModalBooking) return;
+    const d = activeModalBooking.data;
+    const reason = document.getElementById("flag-reason").value;
+    const msg = document.getElementById("flag-message").value.trim();
+    const note = document.getElementById("flag-note");
+    if (!msg) { note.textContent = "Add a short message first."; note.className = "text-xs mt-1"; note.style.color = "#ef4444"; note.classList.remove("hidden"); return; }
+    const partner = String(fieldVal(d, FIELD.homecare) || d.homecare || "").trim();
+    if (!partner) { note.textContent = "This booking has no partner assigned."; note.className = "text-xs mt-1"; note.style.color = "#ef4444"; note.classList.remove("hidden"); return; }
+    const nowIso = new Date().toISOString();
+    const orderId = String(fieldVal(d, FIELD.orderId) || activeModalDocId || "");
+    const ticketId = "FLG-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,6);
+    const btn = document.getElementById("flag-send"); btn.disabled = true; btn.textContent = "Sending…";
+    const payload = {
+      ticketId, kind: "general", direction: "to_homecare", route: "homecare",
+      category: reason, subject: reason + " — order " + orderId, message: msg,
+      homecare: partner, toAgency: partner, orderId,
+      nurse: String(fieldVal(d, FIELD.nurseName) || ""), city: String(fieldVal(d, FIELD.city) || ""),
+      raisedBy: currentUserEmail || "admin", raisedByRole: currentRole, raisedAt: nowIso,
+      notifyAdmins: ADMIN_NOTIFY_EMAILS, notifyHomecare: true
+    };
+    try {
+      await setDoc(doc(db, "tickets", ticketId), {
+        ticketId, kind: "general", direction: "to_homecare", orderId, route: "homecare",
+        category: reason, priority: "Normal", subject: reason + " — order " + orderId, status: "open",
+        nurse: payload.nurse || reason, client: "—", homecare: partner, city: payload.city,
+        createdBy: currentUserEmail || "admin", createdByRole: currentRole,
+        createdAt: nowIso, updatedAt: nowIso,
+        messages: [{ by: currentUserEmail || "admin", role: "admin", text: msg, at: nowIso }]
+      });
+      fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: JSON.stringify(payload) }).catch(() => {});
+      note.textContent = "\u2713 Sent to " + partner + ". They'll be emailed.";
+      note.className = "text-xs mt-1"; note.style.color = "#10b981"; note.classList.remove("hidden");
+      document.getElementById("flag-message").value = "";
+    } catch (e) {
+      console.error("partner flag failed:", e);
+      note.textContent = "Couldn't send. If 'permission-denied', check tickets rules.";
+      note.className = "text-xs mt-1"; note.style.color = "#ef4444"; note.classList.remove("hidden");
+    } finally { btn.disabled = false; btn.textContent = "Send to partner"; }
+  }
+  { const fb = document.getElementById("flag-send"); if (fb) fb.addEventListener("click", sendPartnerFlag); }
+
   const isValidUrl = u => /^https?:\/\/.+/i.test(String(u || "").trim());
   const isDriveUrl = u => /^https?:\/\/(drive|docs)\.google\.com\//i.test(String(u || "").trim());
   document.querySelectorAll(".modal-status-btn").forEach(btn => btn.addEventListener("click", async () => {
