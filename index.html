@@ -2843,6 +2843,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("rev-month").addEventListener("change", () => { if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("rev-rate").addEventListener("change", (e) => { setAgencyRate(parseFloat(e.target.value)); if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
+  document.getElementById("view-activity").addEventListener("click", () => setView("activity"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
