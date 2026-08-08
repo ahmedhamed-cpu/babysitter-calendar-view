@@ -306,6 +306,7 @@
       <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
+      <button id="view-activity" class="view-btn admin-tab-only" data-view="activity" data-active="false">Activity</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
       <span>From</span><input type="date" id="range-from" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
@@ -391,7 +392,14 @@
   </div>
 
   <!-- TICKETS VIEW -->
-  <div id="tickets-container" class="hidden">
+  <div id="activity-container" class="hidden">
+      <div class="flex items-center gap-2 mb-3">
+        <input id="activity-search" type="text" placeholder="Search by order ID, user, or action…" class="icon-input flex-1 h-9 px-3 rounded-lg border brd text-sm" />
+        <span id="activity-count" class="text-xs muted2"></span>
+      </div>
+      <div id="activity-list" class="rounded-xl border brd overflow-hidden" style="background:var(--card)"></div>
+    </div>
+    <div id="tickets-container" class="hidden">
     <div class="flex gap-2 mb-3 items-center">
       <div id="tkt-filter" class="flex gap-1">
         <button data-tf="open" class="tkt-filter-btn" data-active="true">Open</button>
@@ -603,7 +611,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, deleteDoc, arrayUnion, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs, deleteDoc, arrayUnion, serverTimestamp, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
   const firebaseConfig = {
     apiKey: "AIzaSyB5OShyCIKMqu5RijdCKhohu4uB7yzARIY",
@@ -618,6 +626,22 @@
   const db = getFirestore(app);
   const auth = getAuth(app);
   const COLLECTION_NAME = "bookings";
+  const ACTIVITY_COLLECTION = "activity";
+  let activityLog = [];   // admin-only audit trail, loaded live
+  // Fire-and-forget audit logger. Any signed-in user writes; only admins read (rules).
+  async function logActivity(action, orderId, detail) {
+    try {
+      const id = "ACT-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,7);
+      await setDoc(doc(db, ACTIVITY_COLLECTION, id), {
+        at: new Date().toISOString(),
+        by: (typeof currentUserEmail !== "undefined" && currentUserEmail) || "unknown",
+        byRole: (typeof currentRole !== "undefined" && currentRole) || "",
+        action: String(action || ""),
+        orderId: String(orderId || ""),
+        detail: String(detail || "")
+      });
+    } catch (e) { console.warn("activity log skipped:", e && e.code); }
+  }
   // n8n webhooks — the "Sync now" button POSTs to both in parallel so the upsert
   // (fresh attendance / new bookings) and delete (recently-cancelled cleanup) run
   // together on demand. The hourly schedules on both workflows remain as a safety
@@ -630,7 +654,7 @@
   // Ticketing: dashboard POSTs the ticket here; n8n posts it to Slack (keeps the
   // Slack webhook server-side, out of this page's source).
   const TICKET_WEBHOOK = "https://feelvaleo.app.n8n.cloud/webhook/babysitter-ticket";
-  const ADMIN_NOTIFY_EMAILS = ["ahmed.hamed@feelvaleo.com","karthik.ramachandran@feelvaleo.com","nilesh.pandaya@feelvaleo.com"]; // emailed by n8n on every new ticket
+  const ADMIN_NOTIFY_EMAILS = ["ahmed.hamed@feelvaleo.com","karthik.ramachandran@feelvaleo.com","nilesh.pandya@feelvaleo.com"]; // emailed by n8n on every new ticket
   // Scenarios homecare partners / ops can raise. Edit freely.
   const TICKET_CATEGORIES = [
     "Client not answering / no access",
@@ -764,6 +788,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
       createdBy: currentUserEmail || "unknown", createdByRole: currentRole,
       createdAt: nowIso, updatedAt: nowIso, messages: [firstMsg]
     });
+    logActivity("Ticket opened: " + type.label, (toPartner ? "" : ""), (toPartner ? "to " + pickedAgency + " · " : "") + ticketId);
     fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: JSON.stringify(payload) }).catch(() => {});
     document.getElementById("gticket-submit").classList.add("hidden");
     document.getElementById("gticket-success-msg").textContent =
@@ -1646,7 +1671,7 @@ function setTabLoading(containerId, on) {
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
@@ -1659,6 +1684,7 @@ function setTabLoading(containerId, on) {
       fetchPeriod(lo, hi).then(rows => { periodBookings = rows; setTabLoading("revenue-container", false); renderRevenue(); });
       return;
     }
+    if (viewMode === "activity") { show("activity-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Activity log"; renderActivity(); return; }
     if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
 
     const scope = scopeNonStatus();
@@ -2168,6 +2194,7 @@ function setTabLoading(containerId, on) {
             <span class="font-semibold text-sm truncate" style="color:var(--text)">${escapeHtml(t.nurse||"—")}</span>
             <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(priColor(t.priority),0.16)};color:${priColor(t.priority)}">${escapeHtml(t.priority||"Normal")}</span>
           </div>
+          <div class="text-[10px] font-mono muted2 truncate" title="Ticket number">#${escapeHtml(String(t.ticketId||t.id))}</div>
           <div class="text-xs muted2 truncate">${escapeHtml(t.category||"")} · ${escapeHtml(String(t.client||""))}</div>
           <div class="text-xs muted truncate mt-0.5">${escapeHtml(preview)}</div>
           <div class="flex items-center justify-between mt-1">
@@ -2181,6 +2208,45 @@ function setTabLoading(containerId, on) {
     if (activeTicketId && allTickets.some(t => t.id === activeTicketId)) renderTicketChat(activeTicketId);
     else { document.getElementById("tkt-chat").classList.add("hidden"); document.getElementById("tkt-chat-empty").classList.remove("hidden"); }
   }
+  let activitySearch = "";
+  const ACTION_COLOR = {
+    "Status": "#3b82f6", "Booking deleted": "#ef4444", "Compliance": "#8b5cf6",
+    "Ticket resolved": "#10b981", "Ticket reopened": "#f59e0b", "Ticket opened": "#0ea5a3",
+    "Ticket to partner": "#F6BD22", "Profile activated": "#10b981", "Profile deactivated": "#94a3b8"
+  };
+  function actionColor(a) {
+    const key = Object.keys(ACTION_COLOR).find(k => (a||"").startsWith(k));
+    return key ? ACTION_COLOR[key] : "#64748b";
+  }
+  function renderActivity() {
+    if (!isAdmin) { document.getElementById("activity-list").innerHTML = '<div class="p-6 text-center muted2 text-sm">Activity log is available to admins only.</div>'; return; }
+    const q = activitySearch.trim().toLowerCase();
+    const rows = activityLog
+      .slice()
+      .sort((a,b) => (b.at||"").localeCompare(a.at||""))
+      .filter(r => !q || (`${r.action} ${r.orderId} ${r.by} ${r.detail} ${r.byRole}`).toLowerCase().includes(q));
+    document.getElementById("activity-count").textContent = rows.length + (rows.length===1?" event":" events");
+    const list = document.getElementById("activity-list");
+    if (!rows.length) { list.innerHTML = '<div class="p-6 text-center muted2 text-sm">No activity recorded yet.</div>'; return; }
+    list.innerHTML = rows.map(r => {
+      const c = actionColor(r.action);
+      const when = new Date(r.at).toLocaleString("en-US", { month:"short", day:"numeric", hour:"numeric", minute:"2-digit", timeZone:"Asia/Riyadh" });
+      const roleBadge = r.byRole ? `<span class="text-[9px] px-1 py-0.5 rounded" style="background:var(--chip);color:var(--text-3)">${escapeHtml(r.byRole)}</span>` : "";
+      return `<div class="flex items-start gap-3 px-4 py-2.5" style="border-bottom:1px solid var(--border)">
+        <span class="mt-1 h-2 w-2 rounded-full shrink-0" style="background:${c}"></span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-semibold" style="color:${c}">${escapeHtml(r.action)}</span>
+            ${r.orderId ? `<span class="text-[11px] font-mono px-1.5 py-0.5 rounded" style="background:var(--surface);color:var(--text-2)">Order ${escapeHtml(r.orderId)}</span>` : ""}
+          </div>
+          ${r.detail ? `<div class="text-xs muted2 truncate mt-0.5">${escapeHtml(r.detail)}</div>` : ""}
+          <div class="text-[11px] muted2 mt-0.5">${escapeHtml(r.by)} ${roleBadge} · ${escapeHtml(when)}</div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  { const as = document.getElementById("activity-search"); if (as) as.addEventListener("input", e => { activitySearch = e.target.value; renderActivity(); }); }
+
   function openTicketThread(id) { activeTicketId = id; renderTickets(); renderTicketChat(id); }
   function renderTicketChat(id) {
     const t = allTickets.find(x => x.id === id);
@@ -2195,6 +2261,7 @@ function setTabLoading(containerId, on) {
       <div class="flex items-start justify-between gap-2">
         <div>
           <div class="font-bold" style="color:var(--text)">${escapeHtml(t.category||"Ticket")} · <span style="font-weight:500">${escapeHtml(t.priority||"Normal")}</span></div>
+          <div class="text-[11px] font-mono muted2 mt-0.5">Ticket #${escapeHtml(String(t.ticketId||t.id))}</div>
           <div class="text-xs muted2">Order ${escapeHtml(String(t.orderId||""))} · ${escapeHtml(t.nurse||"")} · ${escapeHtml(String(t.client||""))} · ${escapeHtml(t.date||"")} ${escapeHtml(t.time||"")}</div>
           <div class="text-xs muted2">${escapeHtml(t.homecare||"")}${t.city?" · "+escapeHtml(t.city):""}</div>
           ${t.statusChangedBy ? `<div class="text-xs muted2">${t.status==='resolved'?'Resolved':'Reopened'} by ${escapeHtml(t.statusChangedBy)} · ${escapeHtml(fmtRelative(_tsMs(t.statusChangedAt)))}</div>` : ""}
@@ -2217,7 +2284,7 @@ function setTabLoading(containerId, on) {
           status: next, updatedAt: at,
           statusChangedBy: currentUserEmail, statusChangedAt: at,
           statusLog: arrayUnion({ status: next, by: currentUserEmail, at })
-        }); }
+        }); logActivity(next === "resolved" ? "Ticket resolved" : "Ticket reopened", t.orderId, "ticket " + t.id); }
         catch (e) { console.error(e); alert("Couldn't update ticket status. If 'permission-denied', publish the tickets rules."); }
       });
     }
@@ -2326,6 +2393,7 @@ function setTabLoading(containerId, on) {
       try {
         await setDoc(doc(db, "babysitters", sw.getAttribute("data-slug")),
           { name: sw.getAttribute("data-name"), agency: writeAgency, city: sw.getAttribute("data-city"), active: next }, { merge: true });
+        logActivity(next ? "Profile activated" : "Profile deactivated", "", sw.getAttribute("data-name") + " (" + writeAgency + ")");
       } catch (err) {
         console.error("Failed to save profile:", err);
         sw.setAttribute("data-on", String(!next));
@@ -2481,6 +2549,7 @@ function setTabLoading(containerId, on) {
       ...extra
     });
     periodCache.clear();
+    logActivity("Status set: " + newStatus, docId, extra && extra.sickLeaveDoc ? "sick-leave report attached" : "");
   }
 
   // Admin → homecare ticket about THIS booking. Creates a tickets/ doc (direction=to_homecare)
@@ -2516,6 +2585,7 @@ function setTabLoading(containerId, on) {
         messages: [{ by: currentUserEmail || "admin", role: "admin", text: msg, at: nowIso }]
       });
       fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: JSON.stringify(payload) }).catch(() => {});
+      logActivity("Ticket to partner: " + reason, orderId, "to " + partner + " · " + ticketId);
       note.textContent = "\u2713 Sent to " + partner + ". They'll be emailed.";
       note.className = "text-xs mt-1"; note.style.color = "#10b981"; note.classList.remove("hidden");
       document.getElementById("flag-message").value = "";
@@ -2530,8 +2600,10 @@ function setTabLoading(containerId, on) {
       if (!isAdmin || !activeModalDocId) return;
       if (!confirm("Delete this booking from the dashboard?\n\nThis removes the slot now. If the order still exists in Metabase, a future sync may re-add it.")) return;
       try {
+        const _delId = activeModalDocId;
         await deleteDoc(doc(db, COLLECTION_NAME, activeModalDocId));
         periodCache.clear();
+        logActivity("Booking deleted", _delId, "removed by admin");
         closeModal();
       } catch (e) {
         console.error("delete booking failed:", e);
@@ -2726,6 +2798,7 @@ function setTabLoading(containerId, on) {
     };
     try {
       await updateDoc(doc(db, COLLECTION_NAME, activeModalDocId), { compliance: payload });
+      logActivity("Compliance updated", activeModalDocId, `onTime:${payload.onTime||"-"} selfie:${payload.selfieShared||"-"} uniform:${payload.uniformCorrect||"-"} job:${payload.jobCompleted||"-"}`);
       closeModal();
     } catch (err) {
       console.error("Failed to save compliance:", err);
@@ -2757,7 +2830,7 @@ function setTabLoading(containerId, on) {
 
    function setView(mode) {
     if (isHomecare && !["day","week","range","tickets","profiles"].includes(mode)) mode = "day";      // homecare
-    if (!isAdmin && ["compliance","revenue"].includes(mode)) mode = "day";                             // support: no compliance/revenue
+    if (!isAdmin && ["compliance","revenue","activity"].includes(mode)) mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
@@ -3112,6 +3185,16 @@ function setTabLoading(containerId, on) {
   function startApp() {
     if (appStarted) return; appStarted = true;
     startTicketsListener();
+    // Admin-only audit trail listener (rules restrict reads to admins).
+    if (isAdmin) {
+      try {
+        onSnapshot(query(collection(db, ACTIVITY_COLLECTION), orderBy("at", "desc"), limit(500)), (snap) => {
+          const out = []; snap.forEach(r => out.push({ id: r.id, ...r.data() }));
+          activityLog = out;
+          if (viewMode === "activity") renderActivity();
+        }, (err) => console.warn("activity listener:", err && err.code));
+      } catch (e) { console.warn("activity listener setup:", e); }
+    }
 
        // Rolling window on the bookedSlotDate timestamp: 60 days back, 30 forward.
     // Docs with a null bookedSlotDate fall out of the range query — intended.
@@ -3229,7 +3312,7 @@ function setTabLoading(containerId, on) {
   // Admins can mark attendance/status and edit profiles. Everyone else is view-only
   // (can browse all views and export, but cannot write). Enforced for real by the
   // Firestore security rules; this just shapes the UI.
-  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com", "rahul.patel@feelvaleo.com"]; // Nilesh is staff/support, not admin
+  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com"]; // Nilesh is staff/support, not admin
   // Homecare partner logins → the agency whose bookings they may see.
   const HOMECARE_AGENCY = { "giovannivillar0522@gmail.com": "Helpful Agency" };
   function roleOf(email) {
