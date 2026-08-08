@@ -3229,7 +3229,7 @@ function setTabLoading(containerId, on) {
   // Admins can mark attendance/status and edit profiles. Everyone else is view-only
   // (can browse all views and export, but cannot write). Enforced for real by the
   // Firestore security rules; this just shapes the UI.
-  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com"]; // Nilesh is staff/support, not admin
+  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com", "rahul.patel@feelvaleo.com]; // Nilesh is staff/support, not admin
   // Homecare partner logins → the agency whose bookings they may see.
   const HOMECARE_AGENCY = { "giovannivillar0522@gmail.com": "Helpful Agency" };
   function roleOf(email) {
