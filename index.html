@@ -335,7 +335,7 @@
     <select id="city-filter" class="icon-input h-9 px-3 rounded-lg border brd text-sm"><option value="">All cities</option></select>
     <details class="relative staff-only">
       <summary class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium cursor-pointer flex items-center gap-1">Export &#9662;</summary>
-      <div class="absolute z-30 mt-1 right-0 card rounded-lg p-1 w-56">
+      <div class="absolute z-30 mt-1 left-0 card rounded-lg p-1 w-56" style="max-width:calc(100vw - 2rem)">
         <button id="exp-view" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export current view (CSV)</button>
         <button id="exp-exceptions" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export exceptions for invoicing (CSV)</button>
         <button id="exp-compliance" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export compliance report (CSV)</button>
@@ -406,6 +406,12 @@
         <button data-tf="resolved" class="tkt-filter-btn" data-active="false">Resolved</button>
         <button data-tf="all" class="tkt-filter-btn" data-active="false">All</button>
       </div>
+      <div id="tkt-cat-filter" class="flex gap-1">
+        <button data-tc="all" class="tkt-filter-btn" data-active="true">All types</button>
+        <button data-tc="babysitting" class="tkt-filter-btn" data-active="false">Babysitting</button>
+        <button data-tc="medical" class="tkt-filter-btn" data-active="false">Medical</button>
+      </div>
+      <input id="tkt-search" type="text" placeholder="Search ticket #, order ID, name…" class="icon-input h-9 px-3 rounded-lg border brd text-sm" style="min-width:200px" />
       <span id="tkt-count" class="text-xs muted2"></span>
     </div>
     <div class="grid gap-3" style="grid-template-columns: minmax(260px, 340px) 1fr;">
@@ -705,6 +711,10 @@ const GENERAL_TICKET_TYPES = [
   { label: "General ops request",                  route: "ops",        tag: "Ahmed & Nilesh" },
   { label: "Dashboard technical issue (critical)", route: "tech",       tag: "#channel (critical)" },
   { label: "\u2192 Partner: Availability check",        route: "homecare",   tag: "Partner", toPartner: true },
+  { label: "\u2192 Partner: Availability for new order", route: "homecare",   tag: "Partner", toPartner: true },
+  { label: "\u2192 Partner: Call for meeting",           route: "homecare",   tag: "Partner", toPartner: true },
+  { label: "\u2192 Partner: General inquiry",            route: "homecare",   tag: "Partner", toPartner: true },
+  { label: "\u2192 Partner: Raise feedback",             route: "homecare",   tag: "Partner", toPartner: true },
   { label: "\u2192 Partner: Red flag",                  route: "homecare",   tag: "Partner", toPartner: true },
   { label: "\u2192 Partner: Complaint on babysitter",   route: "homecare",   tag: "Partner", toPartner: true }
 ];
@@ -2142,6 +2152,19 @@ function setTabLoading(containerId, on) {
   // ---------- TICKETS (two-way chat) ----------
   let allTickets = [];
   let tktFilter = "open";
+  let tktCatFilter = "all";   // all | babysitting | medical
+  let tktSearch = "";
+  // Look up a ticket's category (babysitting/medical) via its linked booking's subcategory.
+  function ticketCategory(t) {
+    const oid = String(t.orderId || "");
+    if (!oid || oid === "GENERAL") return "";
+    const b = (allBookings || []).find(x => String(fieldVal(x.data, FIELD.orderId) || x.id) === oid || x.id === oid);
+    if (!b) return "";
+    const sub = subcategoryOf(b.data);
+    if (BABYSITTING_CATS.has(sub)) return "babysitting";
+    if (MEDICAL_CATS.has(sub)) return "medical";
+    return "";
+  }
   let activeTicketId = null;
   const tktMs = t => _tsMs(t && (t.updatedAt || t.createdAt));
 
@@ -2174,7 +2197,17 @@ function setTabLoading(containerId, on) {
     b.classList.toggle("hidden", open === 0);
   }
   function ticketsForFilter() {
-    return allTickets.filter(t => tktFilter === "all" ? true : (tktFilter === "resolved" ? t.status === "resolved" : t.status !== "resolved"));
+    const q = tktSearch.trim().toLowerCase();
+    return allTickets.filter(t => {
+      const statusOk = tktFilter === "all" ? true : (tktFilter === "resolved" ? t.status === "resolved" : t.status !== "resolved");
+      if (!statusOk) return false;
+      if (tktCatFilter !== "all") { const c = ticketCategory(t); if (c !== tktCatFilter) return false; }
+      if (q) {
+        const hay = `${t.ticketId||t.id} ${t.orderId||""} ${t.nurse||""} ${t.category||""} ${t.client||""} ${t.homecare||""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
   }
   function renderTickets() {
     const list = ticketsForFilter();
@@ -2195,8 +2228,8 @@ function setTabLoading(containerId, on) {
             <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(priColor(t.priority),0.16)};color:${priColor(t.priority)}">${escapeHtml(t.priority||"Normal")}</span>
           </div>
           <div class="text-[10px] font-mono muted2 truncate" title="Ticket number">#${escapeHtml(String(t.ticketId||t.id))}</div>
-          <div class="text-xs muted2 truncate">${escapeHtml(t.category||"")} · ${escapeHtml(String(t.client||""))}</div>
-          <div class="text-xs muted truncate mt-0.5">${escapeHtml(preview)}</div>
+          <div class="text-xs truncate" style="color:var(--text-2)">${escapeHtml(t.category||"")} · ${escapeHtml(String(t.client||""))}</div>
+          <div class="text-xs truncate mt-0.5" style="color:var(--text-2)">${escapeHtml(preview)}</div>
           <div class="flex items-center justify-between mt-1">
             <span class="text-[10px] muted2">Order ${escapeHtml(String(t.orderId||""))} · ${escapeHtml(when)}</span>
             ${t.status==="resolved" ? '<span class="text-[10px] font-semibold" style="color:#10b981">✓ Resolved</span>' : '<span class="text-[10px] font-semibold" style="color:#f59e0b">Open</span>'}
@@ -2310,6 +2343,12 @@ function setTabLoading(containerId, on) {
     document.querySelectorAll("#tkt-filter .tkt-filter-btn").forEach(x => x.setAttribute("data-active", x === b ? "true" : "false"));
     renderTickets();
   }));
+  document.querySelectorAll("#tkt-cat-filter .tkt-filter-btn").forEach(b => b.addEventListener("click", () => {
+    tktCatFilter = b.getAttribute("data-tc");
+    document.querySelectorAll("#tkt-cat-filter .tkt-filter-btn").forEach(x => x.setAttribute("data-active", x === b ? "true" : "false"));
+    renderTickets();
+  }));
+  { const ts = document.getElementById("tkt-search"); if (ts) ts.addEventListener("input", e => { tktSearch = e.target.value; renderTickets(); }); }
 
   // ---------- BABYSITTER PROFILES ----------
   function renderProfiles() {
@@ -2831,7 +2870,7 @@ function setTabLoading(containerId, on) {
    function setView(mode) {
     if (isHomecare && !["day","week","range","tickets","profiles"].includes(mode)) mode = "day";      // homecare
     if (!isAdmin && ["compliance","revenue","activity"].includes(mode)) mode = "day";                             // support: no compliance/revenue
-    viewMode = mode; document.querySelectorAll(".view-btn").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
+    viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
   document.getElementById("view-week").addEventListener("click", () => setView("week"));
