@@ -913,7 +913,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   // "babysitters" collection; this list provides names/agency/city + lets idle
   // (zero-booking) babysitters still appear in utilisation.
   const ROSTER = [
-    ...["Honey Lane Tamondong","Elma De Jesus","Ellah Baico","Saguira","Mona","Norfaisa","Rechelle","Ruffa","Criselda","Jenifer"].map(n => ({ name:n, agency:"Helpful agency", city:"Jeddah" })),
+    ...["Honey Lane Tamondong","Elma De Jesus","Ellah Baico","Saguira","Mona","Norfaisa","Rechelle","Ruffa","Criselda","Jenifer"].map(n => ({ name:n, agency:"Helpful Agency", city:"Jeddah" })),
     ...[
       { name:"Mary Donna Manjares Valdez", iqama:"Expired",  schedule:"10 AM–10 PM, off Fri" },
       { name:"Warda Inog Zacaria",          iqama:"Expired",  schedule:"7 AM–7 PM, off Fri" },
@@ -932,7 +932,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
       { name:"Juvy Lapuz Somera",           iqama:"Expired",  schedule:"Hourly" },
       { name:"Nenita Regalario",            iqama:"Expired",  schedule:"Hourly" },
       { name:"Ramla Saban",                 iqama:"Expired",  schedule:"Hourly" }
-    ].map(r => ({ ...r, agency:"Helpful agency", city:"Riyadh" })),
+    ].map(r => ({ ...r, agency:"Helpful Agency", city:"Riyadh" })),
     ...["Evangeline Allera Ocampo","Jean Montesilio","Lorena B. Abog","Mary Kaye","Marcelyn Matayao","Rosario Gajardo","Veronica Fidalgo"].map(n => ({ name:n, agency:"Tamaam homecare", city:"" }))
   ];
    // Category grouping keyed off the Metabase "Package Type 2" column.
@@ -1655,7 +1655,7 @@ function setTabLoading(containerId, on) {
   // "Tamaam homecare"/"Tamaam HC"). Fold every variant to one canonical label.
   function canonAgency(s) {
     const t = String(s || "").toLowerCase();
-    if (t.includes("helpful")) return "Helpful agency";
+    if (t.includes("helpful")) return "Helpful Agency";
     if (t.includes("tamaam") || t.includes("tammam") || t.includes("tamam") || t.includes("taman")) return "Tamaam HC";
     return String(s || "").trim();
   }
