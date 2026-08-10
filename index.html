@@ -305,6 +305,7 @@
        <button id="view-compliance" class="view-btn admin-tab-only" data-view="compliance" data-active="false">Compliance</button>
       <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
+      <button id="view-neworders" class="view-btn" data-view="neworders" data-active="false">New Orders <span id="neworders-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#F6BD22;color:#12151C">0</span></button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
       <button id="view-activity" class="view-btn admin-tab-only" data-view="activity" data-active="false">Activity</button>
     </div>
@@ -392,6 +393,99 @@
   </div>
 
   <!-- TICKETS VIEW -->
+  <div id="neworders-container" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div id="no-filter" class="flex gap-1">
+          <button data-nf="open" class="tkt-filter-btn" data-active="true">Open</button>
+          <button data-nf="responded" class="tkt-filter-btn" data-active="false">Responded</button>
+          <button data-nf="closed" class="tkt-filter-btn" data-active="false">Closed / Assigned</button>
+          <button data-nf="all" class="tkt-filter-btn" data-active="false">All</button>
+        </div>
+        <input id="no-search" type="text" placeholder="Search order ID, city, partner…" class="icon-input h-9 px-3 rounded-lg border brd text-sm" style="min-width:200px" />
+        <span id="no-count" class="text-xs muted2"></span>
+        <button id="no-new-btn" class="staff-only ml-auto h-9 px-4 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">+ New request</button>
+      </div>
+      <div class="grid gap-3" style="grid-template-columns: minmax(280px, 380px) 1fr;">
+        <div class="card rounded-2xl overflow-hidden" style="max-height:72vh;overflow-y:auto"><div id="no-list"></div></div>
+        <div class="card rounded-2xl p-4" style="max-height:72vh;overflow-y:auto"><div id="no-detail"><div class="p-6 text-center muted2 text-sm">Select a request to view details and candidates.</div></div></div>
+      </div>
+    </div>
+
+  <!-- New Order: create request (ops) -->
+  <div id="no-modal" class="modal-backdrop hidden">
+    <div class="modal-card card rounded-2xl p-5 w-full" style="max-width:540px">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-lg">New order request</h3>
+        <button id="no-modal-close" class="muted2 hover:opacity-70 text-xl leading-none">&times;</button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs muted2 block mb-1">Service type</label>
+          <select id="no-service" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm">
+            <option value="Babysitting">Babysitting</option>
+            <option value="Medical">Medical</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs muted2 block mb-1">Partner</label>
+          <select id="no-partner" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm"><option value="">Select partner…</option></select>
+        </div>
+        <div>
+          <label class="text-xs muted2 block mb-1">City</label>
+          <input id="no-city" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" placeholder="e.g. Riyadh" />
+        </div>
+        <div>
+          <label class="text-xs muted2 block mb-1">Area / district</label>
+          <input id="no-area" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" placeholder="e.g. Al Olaya" />
+        </div>
+        <div>
+          <label class="text-xs muted2 block mb-1">Date</label>
+          <input id="no-date" type="date" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" />
+        </div>
+        <div>
+          <label class="text-xs muted2 block mb-1">Time / duration</label>
+          <input id="no-time" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" placeholder="e.g. 9AM–3PM (6h)" />
+        </div>
+        <div class="col-span-2">
+          <label class="text-xs muted2 block mb-1">Package / service</label>
+          <input id="no-package" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" placeholder="e.g. Hourly Babysitting : 6 Hours" />
+        </div>
+        <div class="col-span-2">
+          <label class="text-xs muted2 block mb-1">Order ID (optional)</label>
+          <input id="no-orderid" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" placeholder="Child Order ID if known" />
+        </div>
+        <div class="col-span-2">
+          <label class="text-xs muted2 block mb-1">Requirements / notes</label>
+          <textarea id="no-notes" rows="3" class="icon-input w-full px-2 py-2 rounded-lg border brd text-sm" placeholder="Language, experience, special needs, etc."></textarea>
+        </div>
+      </div>
+      <p id="no-modal-err" class="hidden text-xs mt-2" style="color:#ef4444"></p>
+      <button id="no-submit" class="w-full mt-3 px-3 py-2.5 rounded-lg text-sm font-semibold" style="background:var(--gold);color:#12151C">Send request to partner</button>
+    </div>
+  </div>
+
+  <!-- New Order: partner adds a candidate -->
+  <div id="cand-modal" class="modal-backdrop hidden">
+    <div class="modal-card card rounded-2xl p-5 w-full" style="max-width:460px">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-lg">Submit a candidate</h3>
+        <button id="cand-modal-close" class="muted2 hover:opacity-70 text-xl leading-none">&times;</button>
+      </div>
+      <label class="text-xs muted2 block mb-1">Pick an existing profile (optional)</label>
+      <select id="cand-existing" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3"><option value="">— add a new one below —</option></select>
+      <label class="text-xs muted2 block mb-1">Babysitter / candidate name</label>
+      <input id="cand-name" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3" placeholder="Full name" />
+      <label class="text-xs muted2 block mb-1">Availability</label>
+      <input id="cand-avail" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3" placeholder="e.g. Available all day / after 2PM" />
+      <label class="text-xs muted2 block mb-1">CV link (Google Drive)</label>
+      <input id="cand-cv" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3" placeholder="https://drive.google.com/…" />
+      <label class="text-xs muted2 block mb-1">Note (optional)</label>
+      <textarea id="cand-note" rows="2" class="icon-input w-full px-2 py-2 rounded-lg border brd text-sm mb-1" placeholder="Experience, languages, etc."></textarea>
+      <p id="cand-err" class="hidden text-xs mt-1" style="color:#ef4444"></p>
+      <button id="cand-submit" class="w-full mt-2 px-3 py-2.5 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Add candidate</button>
+    </div>
+  </div>
+
   <div id="activity-container" class="hidden">
       <div class="flex items-center gap-2 mb-3">
         <input id="activity-search" type="text" placeholder="Search by order ID, user, or action…" class="icon-input flex-1 h-9 px-3 rounded-lg border brd text-sm" />
@@ -1679,9 +1773,9 @@ function setTabLoading(containerId, on) {
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets") ? "none" : "flex";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
@@ -1695,6 +1789,7 @@ function setTabLoading(containerId, on) {
       return;
     }
     if (viewMode === "activity") { show("activity-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Activity log"; renderActivity(); return; }
+    if (viewMode === "neworders") { show("neworders-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "New order requests"; renderNewOrders(); return; }
     if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
 
     const scope = scopeNonStatus();
@@ -2242,6 +2337,256 @@ function setTabLoading(containerId, on) {
     else { document.getElementById("tkt-chat").classList.add("hidden"); document.getElementById("tkt-chat-empty").classList.remove("hidden"); }
   }
   let activitySearch = "";
+
+  // ============================ NEW ORDER REQUESTS ============================
+  const NEWORDERS_COLLECTION = "newOrders";
+  let newOrders = [];
+  let noFilter = "open";      // open | responded | closed | all
+  let noSearch = "";
+  let activeNoId = null;
+
+  function startNewOrdersListener() {
+    try {
+      let qy;
+      if (isHomecare && currentAgency) {
+        qy = query(collection(db, NEWORDERS_COLLECTION), where("partner", "==", currentAgency));
+      } else {
+        qy = collection(db, NEWORDERS_COLLECTION);
+      }
+      onSnapshot(qy, (snap) => {
+        const out = []; snap.forEach(r => out.push({ id: r.id, ...r.data() }));
+        newOrders = out;
+        // badge: open requests count (partner sees their open; staff see all open)
+        const openCount = newOrders.filter(n => (n.status||"open") === "open" || (n.status||"") === "responded").length;
+        const badge = document.getElementById("neworders-badge");
+        if (badge) { if (openCount > 0) { badge.textContent = openCount; badge.classList.remove("hidden"); } else badge.classList.add("hidden"); }
+        if (viewMode === "neworders") renderNewOrders();
+      }, (err) => console.warn("newOrders listener:", err && err.code));
+    } catch (e) { console.warn("newOrders listener setup:", e); }
+  }
+
+  function noStatusMeta(st) {
+    st = st || "open";
+    if (st === "open")      return { label: "Open",      color: "#F6BD22" };
+    if (st === "responded") return { label: "Responded", color: "#3b82f6" };
+    if (st === "assigned")  return { label: "Assigned",  color: "#10b981" };
+    if (st === "closed")    return { label: "Closed",    color: "#94a3b8" };
+    return { label: st, color: "#94a3b8" };
+  }
+
+  function newOrdersForFilter() {
+    const q = noSearch.trim().toLowerCase();
+    return newOrders.filter(n => {
+      const st = n.status || "open";
+      let ok = true;
+      if (noFilter === "open") ok = st === "open";
+      else if (noFilter === "responded") ok = st === "responded";
+      else if (noFilter === "closed") ok = (st === "closed" || st === "assigned");
+      if (!ok) return false;
+      if (q) {
+        const hay = `${n.orderId||""} ${n.city||""} ${n.area||""} ${n.partner||""} ${n.service||""} ${n.package||""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
+  }
+
+  function renderNewOrders() {
+    const list = newOrdersForFilter();
+    document.getElementById("no-count").textContent = list.length + (list.length===1?" request":" requests");
+    const wrap = document.getElementById("no-list");
+    if (!list.length) { wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm">No requests here yet.</div>'; }
+    else {
+      wrap.innerHTML = list.map(n => {
+        const m = noStatusMeta(n.status);
+        const cands = (n.candidates || []).length;
+        return `<div class="tkt-item" data-noid="${escapeHtml(n.id)}" data-active="${n.id===activeNoId}">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold text-sm truncate" style="color:var(--text)">${escapeHtml(n.service||"—")} · ${escapeHtml(n.city||"")}</span>
+            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(m.color,0.16)};color:${m.color}">${m.label}</span>
+          </div>
+          <div class="text-xs truncate mt-0.5" style="color:var(--text-2)">${escapeHtml(n.partner||"—")}${n.orderId?" · Order "+escapeHtml(n.orderId):""}</div>
+          <div class="text-xs muted2 truncate">${escapeHtml(n.date||"")} ${escapeHtml(n.time||"")} · ${escapeHtml(n.package||"")}</div>
+          <div class="flex items-center justify-between mt-1">
+            <span class="text-[10px] muted2">${escapeHtml(fmtRelative(new Date(n.createdAt||Date.now()).getTime()))}</span>
+            ${cands ? `<span class="text-[10px] font-semibold" style="color:#10b981">${cands} candidate${cands>1?"s":""}</span>` : '<span class="text-[10px] muted2">no candidates yet</span>'}
+          </div>
+        </div>`;
+      }).join("");
+      wrap.querySelectorAll(".tkt-item").forEach(el => el.addEventListener("click", () => { activeNoId = el.getAttribute("data-noid"); renderNewOrders(); renderNoDetail(); }));
+    }
+    renderNoDetail();
+  }
+
+  function renderNoDetail() {
+    const box = document.getElementById("no-detail");
+    const n = newOrders.find(x => x.id === activeNoId);
+    if (!n) { box.innerHTML = '<div class="p-6 text-center muted2 text-sm">Select a request to view details and candidates.</div>'; return; }
+    const m = noStatusMeta(n.status);
+    const cands = n.candidates || [];
+    const isPartnerForThis = isHomecare && currentAgency && n.partner === currentAgency;
+    const candHTML = cands.length ? cands.map((c, i) => `
+      <div class="rounded-lg p-3 mb-2" style="background:var(--surface);border:1px solid var(--border)">
+        <div class="flex items-center justify-between">
+          <span class="font-semibold text-sm">${escapeHtml(c.name||"—")}</span>
+          ${c.cv ? `<a href="${escapeHtml(c.cv)}" target="_blank" rel="noopener noreferrer" class="text-xs underline" style="color:var(--gold-dark)">View CV</a>` : ""}
+        </div>
+        ${c.availability ? `<div class="text-xs muted2 mt-0.5">Availability: ${escapeHtml(c.availability)}</div>` : ""}
+        ${c.note ? `<div class="text-xs mt-0.5" style="color:var(--text-2)">${escapeHtml(c.note)}</div>` : ""}
+        ${isStaff && (n.status!=="assigned"&&n.status!=="closed") ? `<button class="no-assign-btn mt-2 text-xs font-semibold px-2 py-1 rounded" data-idx="${i}" style="background:#10b981;color:#fff">Assign this candidate</button>` : ""}
+        ${c.assigned ? '<span class="text-[10px] font-semibold ml-1" style="color:#10b981">✓ Assigned</span>' : ""}
+      </div>`).join("") : '<div class="text-sm muted2 py-2">No candidates submitted yet.</div>';
+
+    box.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-bold text-lg">${escapeHtml(n.service||"Request")} · ${escapeHtml(n.city||"")}</h3>
+        <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:${hexA(m.color,0.16)};color:${m.color}">${m.label}</span>
+      </div>
+      <div class="text-sm muted2 mb-3">Partner: <b style="color:var(--text)">${escapeHtml(n.partner||"—")}</b></div>
+      <div class="grid grid-cols-2 gap-2 text-sm mb-3">
+        <div><span class="muted2">Area</span><br>${escapeHtml(n.area||"—")}</div>
+        <div><span class="muted2">Date / time</span><br>${escapeHtml(n.date||"—")} ${escapeHtml(n.time||"")}</div>
+        <div><span class="muted2">Package</span><br>${escapeHtml(n.package||"—")}</div>
+        <div><span class="muted2">Order ID</span><br>${escapeHtml(n.orderId||"—")}</div>
+      </div>
+      ${n.notes ? `<div class="rounded-lg p-3 mb-3" style="background:var(--surface);border-left:3px solid var(--gold)"><div class="text-[11px] uppercase muted2 mb-1">Requirements</div><div class="text-sm">${escapeHtml(n.notes)}</div></div>` : ""}
+      <div class="flex items-center justify-between mt-4 mb-2">
+        <h4 class="font-semibold text-sm">Candidates (${cands.length})</h4>
+        ${isPartnerForThis && n.status!=="assigned" && n.status!=="closed" ? '<button id="no-add-cand" class="text-xs font-semibold px-3 py-1.5 rounded-lg" style="background:var(--btn-active-bg);color:var(--btn-active-text)">+ Add candidate</button>' : ""}
+      </div>
+      ${candHTML}
+      ${isStaff && n.status!=="closed" ? `<button id="no-close-btn" class="w-full mt-3 px-3 py-2 rounded-lg text-sm font-semibold" style="background:rgba(148,163,184,0.15);color:var(--text-2)">Close request</button>` : ""}
+    `;
+
+    const addBtn = document.getElementById("no-add-cand");
+    if (addBtn) addBtn.addEventListener("click", () => openCandModal(n.id));
+    box.querySelectorAll(".no-assign-btn").forEach(b => b.addEventListener("click", () => assignCandidate(n.id, parseInt(b.getAttribute("data-idx"),10))));
+    const closeBtn = document.getElementById("no-close-btn");
+    if (closeBtn) closeBtn.addEventListener("click", () => closeRequest(n.id));
+  }
+
+  // ---- Ops: create a request ----
+  function openNewOrderModal() {
+    if (!isStaff) return;
+    const psel = document.getElementById("no-partner");
+    const set = new Set(); Object.values(bsUniverse || {}).forEach(u => { if (u.agency) set.add(u.agency); });
+    psel.innerHTML = '<option value="">Select partner…</option>' + [...set].sort().map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
+    ["no-city","no-area","no-time","no-package","no-orderid","no-notes"].forEach(id => { const el=document.getElementById(id); if(el) el.value=""; });
+    document.getElementById("no-date").value = datePicker.value || todayStr();
+    document.getElementById("no-modal-err").classList.add("hidden");
+    document.getElementById("no-modal").classList.remove("hidden");
+  }
+  async function submitNewOrder() {
+    if (!isStaff) return;
+    const err = document.getElementById("no-modal-err");
+    const service = document.getElementById("no-service").value;
+    const partner = document.getElementById("no-partner").value;
+    const city = document.getElementById("no-city").value.trim();
+    if (!partner) { err.textContent = "Pick a partner to send this to."; err.classList.remove("hidden"); return; }
+    const id = "NO-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,6);
+    const nowIso = new Date().toISOString();
+    const rec = {
+      service, partner, city,
+      area: document.getElementById("no-area").value.trim(),
+      date: document.getElementById("no-date").value,
+      time: document.getElementById("no-time").value.trim(),
+      package: document.getElementById("no-package").value.trim(),
+      orderId: document.getElementById("no-orderid").value.trim(),
+      notes: document.getElementById("no-notes").value.trim(),
+      status: "open", candidates: [],
+      createdBy: currentUserEmail || "ops", createdAt: nowIso, updatedAt: nowIso
+    };
+    const btn = document.getElementById("no-submit"); btn.disabled = true; btn.textContent = "Sending…";
+    try {
+      await setDoc(doc(db, NEWORDERS_COLLECTION, id), rec);
+      // Notify the partner by email via the same ticket webhook (reuse partner routing)
+      const payload = { ticketId: id, kind: "new_order", direction: "to_homecare", route: "homecare",
+        category: "New order request: " + service, subject: service + " request — " + (city||""),
+        message: `New order request for your team.\nService: ${service}\nCity: ${city} ${rec.area}\nDate: ${rec.date} ${rec.time}\nPackage: ${rec.package}\nOrder: ${rec.orderId}\nNotes: ${rec.notes}\n\nPlease open the New Orders tab and submit available candidates.`,
+        homecare: partner, toAgency: partner, orderId: rec.orderId,
+        raisedBy: currentUserEmail || "ops", raisedAt: nowIso, notifyAdmins: ADMIN_NOTIFY_EMAILS, notifyHomecare: true };
+      fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: JSON.stringify(payload) }).catch(() => {});
+      logActivity("New order request created", rec.orderId, "to " + partner + " · " + service);
+      document.getElementById("no-modal").classList.add("hidden");
+      activeNoId = id;
+    } catch (e) {
+      console.error("new order create failed:", e);
+      err.textContent = "Could not save. If 'permission-denied', publish the newOrders rules."; err.classList.remove("hidden");
+    } finally { btn.disabled = false; btn.textContent = "Send request to partner"; }
+  }
+
+  // ---- Partner: add a candidate ----
+  let candForNoId = null;
+  function openCandModal(noId) {
+    candForNoId = noId;
+    const sel = document.getElementById("cand-existing");
+    // existing profiles from this partner's roster
+    const mine = Object.values(bsUniverse || {}).filter(u => isHomecare ? (u.agency||"").toLowerCase() === (currentAgency||"").toLowerCase() : true);
+    sel.innerHTML = '<option value="">— add a new one below —</option>' + mine.map(u => `<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`).join("");
+    ["cand-name","cand-avail","cand-cv","cand-note"].forEach(id => { const el=document.getElementById(id); if(el) el.value=""; });
+    document.getElementById("cand-err").classList.add("hidden");
+    document.getElementById("cand-modal").classList.remove("hidden");
+  }
+  async function submitCandidate() {
+    const err = document.getElementById("cand-err");
+    const picked = document.getElementById("cand-existing").value;
+    const name = picked || document.getElementById("cand-name").value.trim();
+    const cv = document.getElementById("cand-cv").value.trim();
+    if (!name) { err.textContent = "Enter a name or pick a profile."; err.classList.remove("hidden"); return; }
+    if (cv && !/^https?:\/\/(drive|docs)\.google\.com\//i.test(cv)) { err.textContent = "CV link must be a Google Drive link."; err.classList.remove("hidden"); return; }
+    const n = newOrders.find(x => x.id === candForNoId); if (!n) return;
+    const cand = { name, availability: document.getElementById("cand-avail").value.trim(), cv, note: document.getElementById("cand-note").value.trim(), by: currentUserEmail || "partner", at: new Date().toISOString() };
+    const btn = document.getElementById("cand-submit"); btn.disabled = true; btn.textContent = "Adding…";
+    try {
+      await updateDoc(doc(db, NEWORDERS_COLLECTION, candForNoId), {
+        candidates: arrayUnion(cand), status: "responded", updatedAt: new Date().toISOString()
+      });
+      // Notify ops that the partner responded
+      const payload = { ticketId: candForNoId, kind: "new_order_response", direction: "to_ops", route: "ops",
+        category: "New order — candidate submitted", subject: "Candidate: " + name,
+        message: `${n.partner} submitted a candidate for the ${n.service} request in ${n.city}.\nCandidate: ${name}\nAvailability: ${cand.availability}\nCV: ${cv||"—"}`,
+        homecare: n.partner, orderId: n.orderId, raisedBy: currentUserEmail || "partner", raisedAt: cand.at, notifyAdmins: ADMIN_NOTIFY_EMAILS };
+      fetch(TICKET_WEBHOOK, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: JSON.stringify(payload) }).catch(() => {});
+      logActivity("New order candidate submitted", n.orderId, name + " by " + n.partner);
+      document.getElementById("cand-modal").classList.add("hidden");
+    } catch (e) {
+      console.error("candidate submit failed:", e);
+      err.textContent = "Could not submit. If 'permission-denied', check newOrders rules."; err.classList.remove("hidden");
+    } finally { btn.disabled = false; btn.textContent = "Add candidate"; }
+  }
+
+  async function assignCandidate(noId, idx) {
+    if (!isStaff) return;
+    const n = newOrders.find(x => x.id === noId); if (!n) return;
+    const cands = (n.candidates || []).map((c, i) => i === idx ? { ...c, assigned: true } : c);
+    try {
+      await updateDoc(doc(db, NEWORDERS_COLLECTION, noId), { candidates: cands, status: "assigned", updatedAt: new Date().toISOString() });
+      logActivity("New order assigned", n.orderId, (cands[idx] && cands[idx].name) + " · " + n.partner);
+    } catch (e) { console.error("assign failed:", e); alert("Could not assign. Check newOrders rules."); }
+  }
+  async function closeRequest(noId) {
+    if (!isStaff) return;
+    const n = newOrders.find(x => x.id === noId); if (!n) return;
+    try {
+      await updateDoc(doc(db, NEWORDERS_COLLECTION, noId), { status: "closed", updatedAt: new Date().toISOString() });
+      logActivity("New order closed", n.orderId, n.partner);
+    } catch (e) { console.error("close failed:", e); alert("Could not close. Check newOrders rules."); }
+  }
+
+  // wiring
+  { const b = document.getElementById("no-new-btn"); if (b) b.addEventListener("click", openNewOrderModal); }
+  { const b = document.getElementById("no-modal-close"); if (b) b.addEventListener("click", () => document.getElementById("no-modal").classList.add("hidden")); }
+  { const b = document.getElementById("no-submit"); if (b) b.addEventListener("click", submitNewOrder); }
+  { const b = document.getElementById("cand-modal-close"); if (b) b.addEventListener("click", () => document.getElementById("cand-modal").classList.add("hidden")); }
+  { const b = document.getElementById("cand-submit"); if (b) b.addEventListener("click", submitCandidate); }
+  document.querySelectorAll("#no-filter .tkt-filter-btn").forEach(b => b.addEventListener("click", () => {
+    noFilter = b.getAttribute("data-nf");
+    document.querySelectorAll("#no-filter .tkt-filter-btn").forEach(x => x.setAttribute("data-active", x === b ? "true" : "false"));
+    renderNewOrders();
+  }));
+  { const ns = document.getElementById("no-search"); if (ns) ns.addEventListener("input", e => { noSearch = e.target.value; renderNewOrders(); }); }
+  // ==========================================================================
+
   const ACTION_COLOR = {
     "Status": "#3b82f6", "Booking deleted": "#ef4444", "Compliance": "#8b5cf6",
     "Ticket resolved": "#10b981", "Ticket reopened": "#f59e0b", "Ticket opened": "#0ea5a3",
@@ -2868,7 +3213,7 @@ function setTabLoading(containerId, on) {
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
    function setView(mode) {
-    if (isHomecare && !["day","week","range","tickets","profiles"].includes(mode)) mode = "day";      // homecare
+    if (isHomecare && !["day","week","range","tickets","profiles","neworders"].includes(mode)) mode = "day";      // homecare
     if (!isAdmin && ["compliance","revenue","activity"].includes(mode)) mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
@@ -2883,6 +3228,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("rev-rate").addEventListener("change", (e) => { setAgencyRate(parseFloat(e.target.value)); if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
   document.getElementById("view-activity").addEventListener("click", () => setView("activity"));
+  document.getElementById("view-neworders").addEventListener("click", () => setView("neworders"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
@@ -3225,6 +3571,7 @@ function setTabLoading(containerId, on) {
   function startApp() {
     if (appStarted) return; appStarted = true;
     startTicketsListener();
+    startNewOrdersListener();
     // Admin-only audit trail listener (rules restrict reads to admins).
     if (isAdmin) {
       try {
