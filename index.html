@@ -787,6 +787,7 @@
     customerPhone: ["Phone Number","Phone","phone","Customer Phone","customerPhone","Mobile","mobile","Contact Number","Phone No","phone_no"],
     pkg:         ["Package Name","Package Type 2","Package","packageName","Service","Package Type"],
     orderId:     ["orderId","Child Order ID","Order ID","order_id","docId"],
+    lab:         ["Lab1","Lab Name","LabName","lab","Lab","lab_name","Lab 1"],
     homecare:    ["Home Care","HomeCare","Home_Care","Home Care Name","HomeCareName","homeCare","Agency","Partner","Home Care Partner","Provider","Vendor"],
     city:        ["City","city","Emirate","emirate","Area","area","Location","location","Region","region","Zone","zone"],
     bookingType: ["Booking Type","BookingType","Booking_Type","bookingType","Babysitter Type","Booking Frequency","Frequency","Engagement","Engagement Type","Plan","Subscription","Recurrence","Daily/Monthly","Type"],
@@ -940,6 +941,41 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   const SUBCATEGORY_FIELDS = ["subcategory","Subcategory","subCategory","Sub Category","sub_category"];
   const BABYSITTING_CATS = new Set(["Babysitter", "Elderly Care"]);
   const MEDICAL_CATS = new Set(["Physiotherapy/Rehab", "Lab Package", "IV Therapy", "Custom Order", "Administration Package"]);
+
+  // ---- Medical cost lookups (loaded live from Firestore: labCosts + homecareCosts) ----
+  // labCosts key = "packagename|lab"  (lowercased);  homecareCosts key = "servicetype|partner"
+  let labCostMap = {}, homecareCostMap = {};
+  const _ck = (a, b) => (String(a||"").trim().toLowerCase() + "|" + String(b||"").trim().toLowerCase());
+  function startCostListeners() {
+    try {
+      onSnapshot(collection(db, "labCosts"), (snap) => {
+        const m = {}; snap.forEach(r => { const x = r.data(); m[_ck(x.packageName, x.lab)] = Number(x.labCost)||0; });
+        labCostMap = m; if (viewMode === "revenue") renderRevenue();
+      }, (e) => console.warn("labCosts listener:", e && e.code));
+      onSnapshot(collection(db, "homecareCosts"), (snap) => {
+        const m = {}; snap.forEach(r => { const x = r.data(); m[_ck(x.serviceType, x.partner)] = Number(x.charge)||0; });
+        homecareCostMap = m; if (viewMode === "revenue") renderRevenue();
+      }, (e) => console.warn("homecareCosts listener:", e && e.code));
+    } catch (e) { console.warn("cost listeners setup:", e); }
+  }
+  // Per medical order P&L: Revenue = Final Price − Lab Cost − Homecare Charge.
+  function medicalPnL(d) {
+    const pkg = fieldVal(d, FIELD.pkg) || "";
+    const lab = fieldVal(d, FIELD.lab) || "";
+    const partner = fieldVal(d, FIELD.homecare) || d.homecare || "";
+    const sub = subcategoryOf(d);
+    const price = revenueOf(d);
+    const labCost = labCostMap[_ck(pkg, lab)];
+    const hcCharge = homecareCostMap[_ck(sub, partner)];
+    const haveLab = labCost !== undefined, haveHc = hcCharge !== undefined;
+    const lc = haveLab ? labCost : 0, hc = haveHc ? hcCharge : 0;
+    const revenue = (price == null) ? null : (price - lc - hc);
+    return {
+      price, labCost: lc, hcCharge: hc, cost: lc + hc, revenue,
+      lab, partner, missingLab: !haveLab, missingHc: !haveHc,
+      review: (price == null) || !haveLab || !haveHc
+    };
+  }
   const categoryOf    = d => String(fieldVal(d, CATEGORY_FIELDS) || "").trim();
   const subcategoryOf = d => String(fieldVal(d, SUBCATEGORY_FIELDS) || "").trim();
    function passCategory(d) {
@@ -2132,12 +2168,12 @@ function setTabLoading(containerId, on) {
   // Build the per-visit invoice rows for the selected month.
   function revenueRows() {
     const mk = document.getElementById("rev-month").value; // "YYYY-MM"
+    const medMode = (catMajor === "medical");
     const rows = [];
     periodBookings.forEach(b => {
       const d = b.data; const start = parseSlotDateTime(d);
       if (!start || monthKeyOf(start) !== mk) return;
-      const bill = billOf(d);
-      rows.push({
+      const base = {
         id: b.id, b, d, start,
         date: dateKey(start),
         nurse: displayName(fieldVal(d, FIELD.nurseName) || "—"),
@@ -2145,8 +2181,17 @@ function setTabLoading(containerId, on) {
         pkg: fieldVal(d, FIELD.pkg) || "—",
         homecare: homeCareOf(fieldVal(d, FIELD.nurseName)||"") || fieldVal(d, FIELD.homecare) || "—",
         city: fieldVal(d, FIELD.city) || "—",
-        ...bill
-      });
+      };
+      if (medMode) {
+        const pnl = medicalPnL(d);
+        rows.push({ ...base, medical: true, lab: pnl.lab || "—",
+          billable: null, revenue: pnl.revenue, cost: pnl.cost,
+          labCost: pnl.labCost, hcCharge: pnl.hcCharge, missingLab: pnl.missingLab, missingHc: pnl.missingHc,
+          review: pnl.review });
+      } else {
+        const bill = billOf(d);
+        rows.push({ ...base, ...bill });
+      }
     });
     rows.sort((a,b) => a.nurse.localeCompare(b.nurse) || a.start - b.start);
     return rows;
@@ -2165,20 +2210,43 @@ function setTabLoading(containerId, on) {
     document.getElementById("order-count").textContent = rows.length + (rows.length===1?" visit":" visits");
 
     const sum = (arr, f) => arr.reduce((s,x)=>s+(f(x)||0),0);
-    const totBill = sum(rows, r=>r.billable), totCost = sum(rows, r=>r.cost);
-    const totRev = sum(rows, r=> r.revenue||0), totMargin = totRev - totCost;
-    const exceptions = rows.filter(r=>r.isException).length;
-    const flagged = rows.filter(r=>r.review).length;
-
+    const medMode = (catMajor === "medical");
     const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
-    document.getElementById("rev-summary").innerHTML =
-      tile("Visits", rows.length) +
-      tile("Billable hours", (Math.round(totBill*10)/10)) +
-      tile("Cost (agency)", fmtSAR(totCost), "#ef4444") +
-      tile("Revenue", fmtSAR(totRev), "#10b981") +
-      tile("Margin", fmtSAR(totMargin), totMargin>=0?"#10b981":"#ef4444") +
-      tile("Exceptions", exceptions, exceptions?"#f59e0b":"") +
-      tile("Needs review", flagged, flagged?"#f59e0b":"");
+
+    if (medMode) {
+      // Medical P&L: Revenue = Final Price − Lab Cost − Homecare Charge (per order).
+      const totPrice = sum(rows, r=>r.price);
+      const totLab = sum(rows, r=>r.labCost), totHc = sum(rows, r=>r.hcCharge);
+      const totCost = totLab + totHc;
+      const totRev = sum(rows, r=> r.revenue||0);
+      const margin = totPrice ? (totRev/totPrice*100) : 0;
+      const noCosts = (Object.keys(labCostMap).length===0 && Object.keys(homecareCostMap).length===0);
+      const missing = rows.filter(r=>r.missingLab||r.missingHc).length;
+      document.getElementById("rev-summary").innerHTML =
+        tile("Orders", rows.length) +
+        tile("Gross (Final Price)", fmtSAR(totPrice)) +
+        tile("Lab cost", fmtSAR(totLab), "#ef4444") +
+        tile("Homecare cost", fmtSAR(totHc), "#ef4444") +
+        tile("Net revenue", fmtSAR(totRev), "#10b981") +
+        tile("Margin %", (Math.round(margin*10)/10) + "%", margin>=0?"#10b981":"#ef4444") +
+        tile("Missing cost", missing, missing?"#f59e0b":"");
+      document.getElementById("rev-note").innerHTML = noCosts
+        ? `<b style="color:#f59e0b">No cost data loaded yet.</b> Net revenue currently equals gross until the <code>labCosts</code> and <code>homecareCosts</code> collections are populated (run the cost-sync). Once loaded: Net = Final Price − Lab Cost (by package + Lab1) − Homecare Charge (by service type + Homecare partner), per Child Order ID.`
+        : `Medical P&amp;L per Child Order ID: <b>Net = Final Price − Lab Cost − Homecare Charge</b>. Lab cost looked up by package + Lab1; homecare charge by service type + partner. ⚑ = missing a cost (falls back to 0 until added to the sheet/sync).`;
+    } else {
+      const totBill = sum(rows, r=>r.billable), totCost = sum(rows, r=>r.cost);
+      const totRev = sum(rows, r=> r.revenue||0), totMargin = totRev - totCost;
+      const exceptions = rows.filter(r=>r.isException).length;
+      const flagged = rows.filter(r=>r.review).length;
+      document.getElementById("rev-summary").innerHTML =
+        tile("Visits", rows.length) +
+        tile("Billable hours", (Math.round(totBill*10)/10)) +
+        tile("Cost (agency)", fmtSAR(totCost), "#ef4444") +
+        tile("Revenue", fmtSAR(totRev), "#10b981") +
+        tile("Margin", fmtSAR(totMargin), totMargin>=0?"#10b981":"#ef4444") +
+        tile("Exceptions", exceptions, exceptions?"#f59e0b":"") +
+        tile("Needs review", flagged, flagged?"#f59e0b":"");
+    }
 
     const head = `<div class="flex border-b brd surface sticky top-0 z-10 text-[11px] uppercase tracking-wide muted2 font-semibold">
       <div class="w-[84px] shrink-0 px-2 py-2 border-r brd">Date</div>
@@ -2241,7 +2309,7 @@ function setTabLoading(containerId, on) {
     const grid = document.getElementById("rev-grid");
     grid.innerHTML = html;
     grid.querySelectorAll("[data-rev-idx]").forEach(el => el.addEventListener("click", () => { const r = rows[+el.getAttribute("data-rev-idx")]; if (r) openModal(r.b); }));
-    document.getElementById("rev-note").innerHTML = `Billable hours = package hours (from the package name) for <b>Attended</b> visits, minus penalty hours; exceptions (Sick&nbsp;Leave / No&nbsp;Show / Absent) = <b>0</b>. Cost = billable × <b>${AGENCY_RATE} SAR/hr</b>. Revenue = what the client paid (Final Price). Margin = revenue − cost. ⚑ = needs manual review (exception, penalty, package-hours fallback, missing revenue, or logged hours differ ≥1h). Use Export → "Export invoicing timesheet (CSV)".`;
+    if (!medMode) document.getElementById("rev-note").innerHTML = `Billable hours = package hours (from the package name) for <b>Attended</b> visits, minus penalty hours; exceptions (Sick&nbsp;Leave / No&nbsp;Show / Absent) = <b>0</b>. Cost = billable × <b>${AGENCY_RATE} SAR/hr</b>. Revenue = what the client paid (Final Price). Margin = revenue − cost. ⚑ = needs manual review (exception, penalty, package-hours fallback, missing revenue, or logged hours differ ≥1h). Use Export → "Export invoicing timesheet (CSV)".`;
   }
 
   // ---------- TICKETS (two-way chat) ----------
@@ -3572,6 +3640,7 @@ function setTabLoading(containerId, on) {
     if (appStarted) return; appStarted = true;
     startTicketsListener();
     startNewOrdersListener();
+    startCostListeners();
     // Admin-only audit trail listener (rules restrict reads to admins).
     if (isAdmin) {
       try {
