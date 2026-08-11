@@ -308,6 +308,7 @@
       <button id="view-neworders" class="view-btn" data-view="neworders" data-active="false">New Orders <span id="neworders-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#F6BD22;color:#12151C">0</span></button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
       <button id="view-activity" class="view-btn admin-tab-only" data-view="activity" data-active="false">Activity</button>
+      <button id="view-analytics" class="view-btn admin-tab-only" data-view="analytics" data-active="false">Analytics</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
       <span>From</span><input type="date" id="range-from" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
@@ -341,6 +342,7 @@
         <button id="exp-exceptions" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export exceptions for invoicing (CSV)</button>
         <button id="exp-compliance" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export compliance report (CSV)</button>
         <button id="exp-invoicing" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export invoicing timesheet (CSV)</button>
+        <button id="exp-pnl" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">Export P&amp;L (CSV)</button>
         <button id="exp-summary" class="block w-full text-left px-3 py-2 rounded-md text-sm hover:opacity-70">End-of-day summary</button>
       </div>
     </details>
@@ -485,6 +487,17 @@
       <button id="cand-submit" class="w-full mt-2 px-3 py-2.5 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Add candidate</button>
     </div>
   </div>
+
+  <div id="analytics-container" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div id="an-gran" class="flex gap-1">
+          <button data-g="week" class="tkt-filter-btn" data-active="true">Weekly</button>
+          <button data-g="month" class="tkt-filter-btn" data-active="false">Monthly</button>
+        </div>
+        <span class="text-xs muted2">Performance across the loaded period. Admin only.</span>
+      </div>
+      <div id="an-body" class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));"></div>
+    </div>
 
   <div id="activity-container" class="hidden">
       <div class="flex items-center gap-2 mb-3">
@@ -1809,9 +1822,9 @@ function setTabLoading(containerId, on) {
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity") ? "none" : "flex";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
@@ -1824,6 +1837,7 @@ function setTabLoading(containerId, on) {
       fetchPeriod(lo, hi).then(rows => { periodBookings = rows; setTabLoading("revenue-container", false); renderRevenue(); });
       return;
     }
+    if (viewMode === "analytics") { show("analytics-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Analytics"; loadAnalytics(); return; }
     if (viewMode === "activity") { show("activity-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Activity log"; renderActivity(); return; }
     if (viewMode === "neworders") { show("neworders-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "New order requests"; renderNewOrders(); return; }
     if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
@@ -2405,6 +2419,125 @@ function setTabLoading(containerId, on) {
     else { document.getElementById("tkt-chat").classList.add("hidden"); document.getElementById("tkt-chat-empty").classList.remove("hidden"); }
   }
   let activitySearch = "";
+
+  // ============================ ANALYTICS (admin only) ============================
+  let anGran = "week";
+  let anData = null;      // fetched booking set
+  let anLoading = false;
+  function isoWeekKey(dt) {
+    // Year-Www key based on Thursday of the week (ISO-ish, good enough for bucketing)
+    const d = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+    const day = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - day + 3);
+    const firstThu = new Date(Date.UTC(d.getUTCFullYear(),0,4));
+    const week = 1 + Math.round(((d - firstThu)/86400000 - 3 + ((firstThu.getUTCDay()+6)%7))/7);
+    return d.getUTCFullYear() + "-W" + String(week).padStart(2,"0");
+  }
+  function loadAnalytics() {
+    if (!isAdmin) return;
+    if (anData) { renderAnalytics(); return; }
+    if (anLoading) return;
+    anLoading = true;
+    document.getElementById("an-body").innerHTML = '<div class="p-8 text-center muted2 text-sm">Loading analytics…</div>';
+    // Fetch ~180 days back through 14 days forward.
+    const lo = new Date(nowR()); lo.setDate(lo.getDate()-180);
+    const hi = new Date(nowR()); hi.setDate(hi.getDate()+14);
+    const loS = lo.toISOString().slice(0,10), hiS = hi.toISOString().slice(0,10);
+    fetchPeriod(loS, hiS).then(rows => {
+      anData = rows.filter(passStatus);
+      anLoading = false;
+      renderAnalytics();
+    }).catch(e => { anLoading = false; document.getElementById("an-body").innerHTML = '<div class="p-8 text-center muted2 text-sm">Could not load analytics.</div>'; console.warn("analytics fetch:", e); });
+  }
+  function renderAnalytics() {
+    if (!anData) return;
+    const keyOf = (dt) => anGran === "week" ? isoWeekKey(dt) : monthKeyOf(dt);
+    const buckets = {};   // key -> { orders, baby, med, revenue }
+    const partners = {};  // partner -> orders
+    anData.forEach(b => {
+      const d = b.data; const dt = parseSlotDateTime(d); if (!dt) return;
+      const k = keyOf(dt);
+      const sub = subcategoryOf(d);
+      const isMed = MEDICAL_CATS.has(sub);
+      const isBaby = BABYSITTING_CATS.has(sub);
+      const rev = revenueOf(d) || 0;
+      if (!buckets[k]) buckets[k] = { orders:0, baby:0, med:0, revenue:0 };
+      buckets[k].orders++; buckets[k].revenue += rev;
+      if (isMed) buckets[k].med++; else if (isBaby) buckets[k].baby++;
+      const p = fieldVal(d, FIELD.homecare) || d.homecare || "—";
+      partners[p] = (partners[p]||0) + 1;
+    });
+    const keys = Object.keys(buckets).sort().slice(-12);   // last 12 periods
+    const totalOrders = anData.length;
+    const totalRev = anData.reduce((s,b)=>s+(revenueOf(b.data)||0),0);
+    const totalMed = anData.filter(b=>MEDICAL_CATS.has(subcategoryOf(b.data))).length;
+    const totalBaby = anData.filter(b=>BABYSITTING_CATS.has(subcategoryOf(b.data))).length;
+
+    // ---- SVG helpers ----
+    const W=440,H=200,PAD=34;
+    function barChart(title, keys, valFn, color, fmtV) {
+      const vals = keys.map(valFn); const max = Math.max(1, ...vals);
+      const bw = (W-PAD*2)/Math.max(1,keys.length);
+      const bars = keys.map((k,i)=>{
+        const v=vals[i]; const h=(v/max)*(H-PAD*2); const x=PAD+i*bw+bw*0.15; const y=H-PAD-h;
+        const lbl = anGran==="week" ? k.slice(-3) : k.slice(2);
+        return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw*0.7).toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" rx="3" fill="${color}"><title>${k}: ${fmtV?fmtV(v):v}</title></rect>
+          <text x="${(x+bw*0.35).toFixed(1)}" y="${H-PAD+12}" font-size="8" fill="var(--text-3)" text-anchor="middle">${lbl}</text>`;
+      }).join("");
+      return `<div class="card rounded-2xl p-4">
+        <div class="text-sm font-semibold mb-2">${title}</div>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+          <line x1="${PAD}" y1="${H-PAD}" x2="${W-PAD/2}" y2="${H-PAD}" stroke="var(--border)"/>
+          <text x="${PAD-4}" y="${PAD}" font-size="9" fill="var(--text-3)" text-anchor="end">${fmtV?fmtV(max):max}</text>
+          ${bars}
+        </svg></div>`;
+    }
+    function stackChart(title, keys) {
+      const max = Math.max(1, ...keys.map(k=>buckets[k].orders));
+      const bw = (W-PAD*2)/Math.max(1,keys.length);
+      const bars = keys.map((k,i)=>{
+        const b=buckets[k]; const x=PAD+i*bw+bw*0.15; const w=bw*0.7;
+        const hB=(b.baby/max)*(H-PAD*2), hM=(b.med/max)*(H-PAD*2);
+        const yB=H-PAD-hB, yM=yB-hM;
+        return `<rect x="${x.toFixed(1)}" y="${yB.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hB).toFixed(1)}" fill="#3b82f6"><title>${k} Babysitting: ${b.baby}</title></rect>
+          <rect x="${x.toFixed(1)}" y="${yM.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hM).toFixed(1)}" fill="#F6BD22"><title>${k} Medical: ${b.med}</title></rect>
+          <text x="${(x+w/2).toFixed(1)}" y="${H-PAD+12}" font-size="8" fill="var(--text-3)" text-anchor="middle">${anGran==="week"?k.slice(-3):k.slice(2)}</text>`;
+      }).join("");
+      return `<div class="card rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-2"><div class="text-sm font-semibold">${title}</div>
+          <div class="text-[10px]"><span style="color:#3b82f6">■</span> Babysitting <span style="color:#F6BD22">■</span> Medical</div></div>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+          <line x1="${PAD}" y1="${H-PAD}" x2="${W-PAD/2}" y2="${H-PAD}" stroke="var(--border)"/>${bars}
+        </svg></div>`;
+    }
+    const topP = Object.entries(partners).sort((a,b)=>b[1]-a[1]).slice(0,6);
+    const maxP = Math.max(1, ...topP.map(x=>x[1]));
+    const partnerBars = topP.map(([n,v])=>`
+      <div class="flex items-center gap-2 mb-1.5">
+        <div class="text-xs truncate" style="width:120px" title="${escapeHtml(n)}">${escapeHtml(n)}</div>
+        <div class="flex-1 rounded-full h-3" style="background:var(--surface)"><div class="h-3 rounded-full" style="width:${(v/maxP*100).toFixed(0)}%;background:var(--gold)"></div></div>
+        <div class="text-xs font-semibold" style="width:32px;text-align:right">${v}</div>
+      </div>`).join("");
+
+    const kpi = (l,v)=>`<div class="card rounded-2xl p-3"><div class="text-[11px] muted2">${l}</div><div class="text-xl font-bold">${v}</div></div>`;
+    document.getElementById("an-body").innerHTML =
+      `<div class="grid gap-3" style="grid-template-columns:repeat(4,1fr);grid-column:1/-1">
+        ${kpi("Total orders (180d)", totalOrders)}
+        ${kpi("Total revenue", fmtSAR(totalRev))}
+        ${kpi("Babysitting", totalBaby)}
+        ${kpi("Medical", totalMed)}
+      </div>` +
+      barChart("Orders per " + (anGran==="week"?"week":"month"), keys, k=>buckets[k].orders, "var(--gold)") +
+      barChart("Revenue per " + (anGran==="week"?"week":"month"), keys, k=>buckets[k].revenue, "#10b981", v=>fmtSAR(v)) +
+      stackChart("Category split", keys) +
+      `<div class="card rounded-2xl p-4"><div class="text-sm font-semibold mb-3">Top partners by orders</div>${partnerBars||'<div class="muted2 text-sm">No data</div>'}</div>`;
+  }
+  document.querySelectorAll("#an-gran .tkt-filter-btn").forEach(b => b.addEventListener("click", () => {
+    anGran = b.getAttribute("data-g");
+    document.querySelectorAll("#an-gran .tkt-filter-btn").forEach(x => x.setAttribute("data-active", x===b?"true":"false"));
+    renderAnalytics();
+  }));
+  // ==============================================================================
+
 
   // ============================ NEW ORDER REQUESTS ============================
   const NEWORDERS_COLLECTION = "newOrders";
@@ -3282,7 +3415,7 @@ function setTabLoading(containerId, on) {
 
    function setView(mode) {
     if (isHomecare && !["day","week","range","tickets","profiles","neworders"].includes(mode)) mode = "day";      // homecare
-    if (!isAdmin && ["compliance","revenue","activity"].includes(mode)) mode = "day";                             // support: no compliance/revenue
+    if (!isAdmin && ["compliance","revenue","activity","analytics"].includes(mode)) mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
@@ -3297,6 +3430,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
   document.getElementById("view-activity").addEventListener("click", () => setView("activity"));
   document.getElementById("view-neworders").addEventListener("click", () => setView("neworders"));
+  document.getElementById("view-analytics").addEventListener("click", () => setView("analytics"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
@@ -3345,6 +3479,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("exp-exceptions").addEventListener("click", () => { closeMenus(); exportExceptionsCSV(); });
   document.getElementById("exp-compliance").addEventListener("click", () => { closeMenus(); exportComplianceCSV(); });
   document.getElementById("exp-invoicing").addEventListener("click", () => { closeMenus(); exportInvoicingCSV(); });
+  document.getElementById("exp-pnl").addEventListener("click", () => { closeMenus(); exportPnlCSV(); });
   document.getElementById("exp-summary").addEventListener("click", () => { closeMenus(); openSummary(); });
   document.getElementById("summary-modal").addEventListener("click", e => { if (e.target.id === "summary-modal") closeSummary(); });
 
@@ -3531,6 +3666,54 @@ function setTabLoading(containerId, on) {
 
   // Invoicing timesheet: one row per visit for the selected month, with agency cost,
   // client revenue, margin, exceptions, penalties and notes — subtotaled per babysitter.
+  function exportPnlCSV() {
+    const rows = revenueRows();
+    if (!rows.length) { alert("No orders in the selected month to export."); return; }
+    const mk = document.getElementById("rev-month").value;
+    const medMode = (catMajor === "medical");
+    let out, fname;
+    if (medMode) {
+      out = rows.map(r => ({
+        "Date": r.date, "Order ID": String(fieldVal(r.d, FIELD.orderId) || r.id),
+        "Client": r.client, "Package": r.pkg, "Sub-category": subcategoryOf(r.d),
+        "Homecare Partner": r.homecare, "Lab": r.lab || "",
+        "Gross (Final Price)": r.price == null ? "" : Math.round(r.price*100)/100,
+        "Lab Cost": Math.round((r.labCost||0)*100)/100,
+        "Homecare Charge": Math.round((r.hcCharge||0)*100)/100,
+        "Total Cost": Math.round(((r.labCost||0)+(r.hcCharge||0))*100)/100,
+        "Net Revenue": r.revenue == null ? "" : Math.round(r.revenue*100)/100,
+        "Margin %": (r.price ? Math.round((r.revenue/r.price)*1000)/10 : "") ,
+        "Missing Lab Cost": r.missingLab ? "YES" : "",
+        "Missing HC Cost": r.missingHc ? "YES" : ""
+      }));
+      // totals row
+      const T = (f) => Math.round(rows.reduce((s,x)=>s+(x[f]||0),0)*100)/100;
+      const gross=T("price"), lab=T("labCost"), hc=T("hcCharge"), net=rows.reduce((s,x)=>s+(x.revenue||0),0);
+      out.push({ "Date":"", "Order ID":"TOTAL", "Client":"", "Package":"", "Sub-category":"", "Homecare Partner":"", "Lab":"",
+        "Gross (Final Price)":Math.round(gross*100)/100, "Lab Cost":lab, "Homecare Charge":hc, "Total Cost":Math.round((lab+hc)*100)/100,
+        "Net Revenue":Math.round(net*100)/100, "Margin %": gross?Math.round((net/gross)*1000)/10:"", "Missing Lab Cost":"", "Missing HC Cost":"" });
+      fname = "medical_PnL_" + mk + ".csv";
+    } else {
+      out = rows.map(r => ({
+        "Date": r.date, "Order ID": String(fieldVal(r.d, FIELD.orderId) || r.id),
+        "Babysitter": r.nurse, "Client": r.client, "Package": r.pkg, "Partner": r.homecare, "City": r.city,
+        "Status": effStatus(r.d),
+        "Billable Hours": r.billable == null ? "" : r.billable,
+        "Cost (agency)": Math.round((r.cost||0)*100)/100,
+        "Revenue (Final Price)": r.revenue == null ? "" : Math.round(r.revenue*100)/100,
+        "Margin": (r.revenue == null) ? "" : Math.round(((r.revenue||0)-(r.cost||0))*100)/100,
+        "Needs Review": r.review ? "YES" : ""
+      }));
+      const cost=rows.reduce((s,x)=>s+(x.cost||0),0), rev=rows.reduce((s,x)=>s+(x.revenue||0),0);
+      out.push({ "Date":"", "Order ID":"TOTAL", "Babysitter":"", "Client":"", "Package":"", "Partner":"", "City":"", "Status":"",
+        "Billable Hours": Math.round(rows.reduce((s,x)=>s+(x.billable||0),0)*10)/10,
+        "Cost (agency)": Math.round(cost*100)/100, "Revenue (Final Price)": Math.round(rev*100)/100,
+        "Margin": Math.round((rev-cost)*100)/100, "Needs Review":"" });
+      fname = "babysitting_PnL_" + mk + ".csv";
+    }
+    downloadFile(fname, toCSV(out));
+  }
+
   function exportInvoicingCSV() {
     const mEl = document.getElementById("rev-month");
     if (!mEl.value) mEl.value = monthKeyOf(nowR());
