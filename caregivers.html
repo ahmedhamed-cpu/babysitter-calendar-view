@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Valeo Care · Meet Our Caregivers</title>
+<meta name="description" content="Browse verified Valeo home-care professionals — bios, skills, ratings, and availability." />
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1F2A44;        /* deep trustworthy navy */
+    --paper:#FBF7F0;      /* soft warm paper */
+    --sage:#4C7A63;       /* calm caregiving green */
+    --sage-soft:#E7F0EA;
+    --gold:#E7A33E;       /* Valeo warm gold */
+    --rose:#D98A73;       /* gentle accent */
+    --line:#E7E0D4;
+    --muted:#6C7488;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased}
+  .display{font-family:'Fraunces',Georgia,serif}
+  .card-lift{transition:transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease}
+  .card-lift:hover{transform:translateY(-4px);box-shadow:0 16px 40px rgba(31,42,68,.13)}
+  .fade-in{animation:fade .5s ease both}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .stagger>*{opacity:0;animation:fade .5s ease forwards}
+  .avatar-ring{box-shadow:0 0 0 3px var(--paper),0 0 0 5px var(--sage)}
+  .skill-chip{background:var(--sage-soft);color:var(--sage);border:1px solid #d3e4d9}
+  .btn-primary{background:var(--ink);color:#fff;transition:filter .15s ease}
+  .btn-primary:hover{filter:brightness(1.15)}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+  .star{color:var(--gold)}
+</style>
+</head>
+<body>
+<!-- ============ HEADER ============ -->
+<header class="sticky top-0 z-30 backdrop-blur" style="background:rgba(251,247,240,.85);border-bottom:1px solid var(--line)">
+  <div class="max-w-6xl mx-auto px-5 h-16 flex items-center justify-between">
+    <div class="flex items-center gap-2.5">
+      <div class="w-9 h-9 rounded-xl flex items-center justify-center display font-bold text-white" style="background:var(--ink)">V</div>
+      <div>
+        <div class="display font-bold text-lg leading-none" style="color:var(--ink)">Valeo Care</div>
+        <div class="text-[11px]" style="color:var(--muted)">Home-care professionals</div>
+      </div>
+    </div>
+    <a id="back-link" href="#/gallery" class="hidden text-sm font-semibold px-3 py-1.5 rounded-lg" style="color:var(--sage)">← All caregivers</a>
+  </div>
+</header>
+
+<main id="app" class="max-w-6xl mx-auto px-5 py-8"></main>
+
+<footer class="max-w-6xl mx-auto px-5 py-10 text-center text-sm" style="color:var(--muted)">
+  <div class="display text-base mb-1" style="color:var(--ink)">Valeo Health</div>
+  Verified caregivers · Every profile reviewed by our team.
+  <div class="mt-1 text-xs">This page shows only public professional information shared with your consent.</div>
+</footer>
+
+<!-- ============ FIREBASE + APP ============ -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, collection, doc, getDoc, getDocs, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+// ---- Firebase config (same project; public page only ever READS publicProfiles) ----
+const firebaseConfig = {
+  apiKey: "REPLACE_WITH_WEB_API_KEY",
+  authDomain: "bs-calendar-view.firebaseapp.com",
+  projectId: "bs-calendar-view",
+  storageBucket: "bs-calendar-view.appspot.com"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const COLLECTION = "publicProfiles";
+
+const app_el = document.getElementById("app");
+const backLink = document.getElementById("back-link");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// ---------- tiny hash router ----------
+function router(){
+  const hash = location.hash || "#/gallery";
+  const m = hash.match(/^#\/p\/(.+)$/);
+  if (m) { backLink.classList.remove("hidden"); renderProfile(decodeURIComponent(m[1])); }
+  else { backLink.classList.add("hidden"); renderGallery(); }
+  window.scrollTo(0,0);
+}
+window.addEventListener("hashchange", router);
+
+function stars(r){
+  const full = Math.round(r||0);
+  return `<span class="star" aria-label="${(r||0)} out of 5">${"★".repeat(full)}<span style="color:var(--line)">${"★".repeat(5-full)}</span></span>`;
+}
+function loading(msg){ app_el.innerHTML = `<div class="py-24 text-center" style="color:var(--muted)">${esc(msg||"Loading…")}</div>`; }
+function errorMsg(msg){ app_el.innerHTML = `<div class="py-24 text-center"><div class="display text-2xl mb-2">Nothing to show</div><div style="color:var(--muted)">${esc(msg)}</div></div>`; }
+
+// ---------- GALLERY ----------
+async function renderGallery(){
+  // optional share-group filter: #/gallery?g=grp_abc  (via query in hash)
+  const groupMatch = location.hash.match(/[?&]g=([^&]+)/);
+  const group = groupMatch ? decodeURIComponent(groupMatch[1]) : null;
+  loading("Finding caregivers for you…");
+  try{
+    let snap;
+    if (group){
+      snap = await getDocs(query(collection(db, COLLECTION), where("published","==",true), where("shareGroup","==",group)));
+    } else {
+      snap = await getDocs(query(collection(db, COLLECTION), where("published","==",true)));
+    }
+    const profiles = [];
+    snap.forEach(d => profiles.push({ id:d.id, ...d.data() }));
+    profiles.sort((a,b)=>(a.order??999)-(b.order??999) || (b.rating||0)-(a.rating||0));
+    if (!profiles.length){ errorMsg("No caregiver profiles are available right now."); return; }
+
+    app_el.innerHTML = `
+      <section class="fade-in mb-9">
+        <div class="text-xs font-bold tracking-[.18em] uppercase mb-3" style="color:var(--sage)">Handpicked for your family</div>
+        <h1 class="display font-bold leading-[1.05]" style="font-size:clamp(2rem,5vw,3.4rem);color:var(--ink)">
+          Meet caregivers you can<br><span style="color:var(--sage)">trust with your loved ones.</span>
+        </h1>
+        <p class="mt-4 max-w-xl text-[15px]" style="color:var(--muted)">
+          Every professional below is verified by the Valeo team. Browse their experience, skills, and what families say — then tell us who feels right.
+        </p>
+      </section>
+      <div class="stagger grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(270px,1fr))">
+        ${profiles.map((p,i)=>cardHTML(p,i)).join("")}
+      </div>`;
+    // stagger timing
+    [...app_el.querySelectorAll(".stagger > *")].forEach((el,i)=>el.style.animationDelay=(i*60)+"ms");
+  }catch(e){
+    console.error(e);
+    errorMsg("We couldn't load caregiver profiles. Please check the link or try again shortly.");
+  }
+}
+
+function cardHTML(p,i){
+  const photo = p.photoUrl
+    ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.name)}" class="w-full h-full object-cover" loading="lazy" />`
+    : `<div class="w-full h-full flex items-center justify-center display text-4xl" style="background:var(--sage-soft);color:var(--sage)">${esc((p.name||"?").slice(0,1))}</div>`;
+  const skills = (p.skills||[]).slice(0,3).map(s=>`<span class="skill-chip text-[11px] px-2 py-0.5 rounded-full">${esc(s)}</span>`).join(" ");
+  return `<a href="#/p/${encodeURIComponent(p.id)}" class="card-lift block rounded-2xl overflow-hidden bg-white" style="border:1px solid var(--line);text-decoration:none">
+    <div class="relative" style="aspect-ratio:4/3;background:var(--sage-soft)">
+      ${photo}
+      ${p.verified?`<span class="absolute top-3 right-3 text-[11px] font-bold px-2 py-1 rounded-full" style="background:rgba(255,255,255,.92);color:var(--sage)">✓ Verified</span>`:""}
+    </div>
+    <div class="p-4">
+      <div class="flex items-center justify-between gap-2">
+        <div class="display font-bold text-lg leading-tight" style="color:var(--ink)">${esc(p.name)}</div>
+        ${p.rating?`<div class="text-sm font-semibold whitespace-nowrap">${stars(p.rating)} <span style="color:var(--muted)">${(p.rating).toFixed(1)}</span></div>`:""}
+      </div>
+      ${p.headline?`<div class="text-[13px] mt-0.5" style="color:var(--muted)">${esc(p.headline)}</div>`:""}
+      <div class="flex flex-wrap gap-1.5 mt-3">${skills}</div>
+      <div class="mt-4 text-sm font-semibold" style="color:var(--sage)">View profile →</div>
+    </div>
+  </a>`;
+}
+
+// ---------- INDIVIDUAL PROFILE ----------
+async function renderProfile(id){
+  loading("Opening profile…");
+  try{
+    const snap = await getDoc(doc(db, COLLECTION, id));
+    if (!snap.exists() || snap.data().published !== true){ errorMsg("This profile isn't available."); return; }
+    const p = { id:snap.id, ...snap.data() };
+    const photo = p.photoUrl
+      ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.name)}" class="w-full h-full object-cover" />`
+      : `<div class="w-full h-full flex items-center justify-center display text-6xl" style="background:var(--sage-soft);color:var(--sage)">${esc((p.name||"?").slice(0,1))}</div>`;
+    const skills = (p.skills||[]).map(s=>`<span class="skill-chip text-sm px-3 py-1 rounded-full">${esc(s)}</span>`).join(" ");
+    const langs = (p.languages||[]).join(" · ");
+    const feedback = (p.feedback||[]).map(f=>`
+      <div class="rounded-2xl p-4 bg-white" style="border:1px solid var(--line)">
+        <div class="text-sm mb-2">${stars(f.stars||5)}</div>
+        <div class="text-[15px] leading-relaxed" style="color:var(--ink)">“${esc(f.text)}”</div>
+        <div class="text-xs mt-2" style="color:var(--muted)">— ${esc(f.author||"A Valeo family")}</div>
+      </div>`).join("");
+    const availability = (p.availability||[]).map(a=>`
+      <div class="flex items-start gap-3 py-2" style="border-bottom:1px solid var(--line)">
+        <div class="w-14 font-semibold text-sm" style="color:var(--ink)">${esc(a.day)}</div>
+        <div class="flex flex-wrap gap-1.5">${(a.slots||[]).map(s=>`<span class="text-[12px] px-2 py-0.5 rounded-md" style="background:var(--sage-soft);color:var(--sage)">${esc(s)}</span>`).join("")||'<span class="text-sm" style="color:var(--muted)">—</span>'}</div>
+      </div>`).join("");
+
+    app_el.innerHTML = `
+    <article class="fade-in grid gap-8 lg:grid-cols-[340px_1fr]">
+      <!-- left: photo + quick facts -->
+      <aside>
+        <div class="rounded-3xl overflow-hidden" style="aspect-ratio:1;border:1px solid var(--line);background:var(--sage-soft)">${photo}</div>
+        <div class="mt-4 rounded-2xl p-4 bg-white" style="border:1px solid var(--line)">
+          ${p.rating?`<div class="flex items-center justify-between mb-3"><span style="color:var(--muted)" class="text-sm">Rating</span><span class="font-semibold">${stars(p.rating)} ${(p.rating).toFixed(1)} <span style="color:var(--muted)" class="text-xs">(${p.ratingCount||0})</span></span></div>`:""}
+          ${p.experienceYears?`<div class="flex items-center justify-between mb-3"><span style="color:var(--muted)" class="text-sm">Experience</span><span class="font-semibold">${esc(p.experienceYears)} years</span></div>`:""}
+          ${p.city?`<div class="flex items-center justify-between mb-3"><span style="color:var(--muted)" class="text-sm">Based in</span><span class="font-semibold">${esc(p.city)}</span></div>`:""}
+          ${langs?`<div class="flex items-center justify-between"><span style="color:var(--muted)" class="text-sm">Languages</span><span class="font-semibold text-sm">${esc(langs)}</span></div>`:""}
+        </div>
+        <button onclick="location.hash='#/gallery'" class="btn-primary w-full mt-4 rounded-xl py-3 font-semibold">Request this caregiver</button>
+        <p class="text-[11px] text-center mt-2" style="color:var(--muted)">Our team will confirm availability with you.</p>
+      </aside>
+
+      <!-- right: story -->
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          ${p.verified?`<span class="text-[11px] font-bold px-2 py-1 rounded-full" style="background:var(--sage-soft);color:var(--sage)">✓ Verified by Valeo</span>`:""}
+        </div>
+        <h1 class="display font-bold leading-tight" style="font-size:clamp(2rem,4vw,2.8rem);color:var(--ink)">${esc(p.name)}</h1>
+        ${p.headline?`<p class="text-lg mt-1" style="color:var(--sage)">${esc(p.headline)}</p>`:""}
+        ${p.bio?`<p class="mt-5 text-[16px] leading-relaxed" style="color:var(--ink)">${esc(p.bio)}</p>`:""}
+
+        ${skills?`<h2 class="display font-semibold text-xl mt-8 mb-3">Skills &amp; strengths</h2><div class="flex flex-wrap gap-2">${skills}</div>`:""}
+
+        ${availability?`<h2 class="display font-semibold text-xl mt-8 mb-2">Typical availability</h2><div class="rounded-2xl p-4 bg-white" style="border:1px solid var(--line)">${availability}</div><p class="text-xs mt-2" style="color:var(--muted)">Availability is indicative; we confirm exact slots when you book.</p>`:""}
+
+        ${feedback?`<h2 class="display font-semibold text-xl mt-8 mb-3">What families say</h2><div class="grid gap-3 sm:grid-cols-2">${feedback}</div>`:""}
+      </div>
+    </article>`;
+  }catch(e){
+    console.error(e);
+    errorMsg("We couldn't open this profile. Please check your link.");
+  }
+}
+
+router();
+</script>
+</body>
+</html>
