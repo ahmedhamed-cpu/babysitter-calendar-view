@@ -533,6 +533,7 @@
         <span class="text-xs muted2">Performance across the loaded period. Admin only.</span>
       </div>
       <div id="an-body" class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));"></div>
+      <div id="an-insights" class="grid gap-4 mt-4" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));"></div>
     </div>
 
   <div id="activity-container" class="hidden">
@@ -2575,7 +2576,9 @@ function setTabLoading(containerId, on) {
       const bars = keys.map((k,i)=>{
         const v=vals[i]; const h=(v/max)*(H-PAD*2); const x=PAD+i*bw+bw*0.15; const y=H-PAD-h;
         const lbl = anGran==="week" ? k.slice(-3) : k.slice(2);
+        const dl = fmtV ? Math.round(v) : v;   // compact data label (revenue rounded)
         return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw*0.7).toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" rx="3" fill="${color}"><title>${k}: ${fmtV?fmtV(v):v}</title></rect>
+          <text x="${(x+bw*0.35).toFixed(1)}" y="${(y-3).toFixed(1)}" font-size="8" font-weight="600" fill="var(--text-2)" text-anchor="middle">${v>0?dl:""}</text>
           <text x="${(x+bw*0.35).toFixed(1)}" y="${H-PAD+12}" font-size="8" fill="var(--text-3)" text-anchor="middle">${lbl}</text>`;
       }).join("");
       return `<div class="card rounded-2xl p-4">
@@ -2595,6 +2598,7 @@ function setTabLoading(containerId, on) {
         const yB=H-PAD-hB, yM=yB-hM;
         return `<rect x="${x.toFixed(1)}" y="${yB.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hB).toFixed(1)}" fill="#3b82f6"><title>${k} Babysitting: ${b.baby}</title></rect>
           <rect x="${x.toFixed(1)}" y="${yM.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hM).toFixed(1)}" fill="#F6BD22"><title>${k} Medical: ${b.med}</title></rect>
+          <text x="${(x+w/2).toFixed(1)}" y="${(yM-3).toFixed(1)}" font-size="8" font-weight="600" fill="var(--text-2)" text-anchor="middle">${b.orders>0?b.orders:""}</text>
           <text x="${(x+w/2).toFixed(1)}" y="${H-PAD+12}" font-size="8" fill="var(--text-3)" text-anchor="middle">${anGran==="week"?k.slice(-3):k.slice(2)}</text>`;
       }).join("");
       return `<div class="card rounded-2xl p-4">
@@ -2629,6 +2633,121 @@ function setTabLoading(containerId, on) {
       `<div class="card rounded-2xl p-4 an-chart" data-anchart="partners"><div class="text-sm font-semibold mb-3">Top partners by orders</div>${partnerBars||'<div class="muted2 text-sm">No data</div>'}${clickHint}</div>`;
     // clicking a chart opens the interactive detail modal
     document.querySelectorAll("#an-body .an-chart").forEach(el => el.addEventListener("click", () => openAnDetail(el.getAttribute("data-anchart"))));
+    renderInsights();
+  }
+
+  // ---- INSIGHTS: partner churn, customer retention, top babysitters, partner earnings ----
+  const CHURN_DAYS = 60;
+  function renderInsights() {
+    if (!anData) return;
+    const now = nowR().getTime();
+    // aggregate per partner and per babysitter and per client
+    const P = {};   // partner -> {orders, revenue, last, first, prevOrders, recentOrders}
+    const B = {};   // babysitter -> {orders, revenue}
+    const C = {};   // client -> {orders, first, last, revenue}
+    const cutoffRecent = now - 30*86400000;      // last 30 days
+    const cutoffPrev = now - 60*86400000;        // 30-60 days ago
+    anData.forEach(b => {
+      const d = b.data; const dt = parseSlotDateTime(d); if (!dt) return;
+      const t = dt.getTime(); const rev = revenueOf(d) || 0;
+      const partner = String(fieldVal(d, FIELD.homecare) || d.homecare || "—").trim() || "—";
+      const bs = displayName(fieldVal(d, FIELD.nurseName) || "—");
+      const client = String(fieldVal(d, FIELD.customer) || "").trim() || "Unknown";
+      if (!P[partner]) P[partner] = { orders:0, revenue:0, last:0, first:Infinity, recent:0, prev:0 };
+      P[partner].orders++; P[partner].revenue += rev; P[partner].last = Math.max(P[partner].last, t); P[partner].first = Math.min(P[partner].first, t);
+      if (t >= cutoffRecent) P[partner].recent++; else if (t >= cutoffPrev) P[partner].prev++;
+      if (bs && bs !== "—") { if (!B[bs]) B[bs] = { orders:0, revenue:0, partner }; B[bs].orders++; B[bs].revenue += rev; }
+      if (!C[client]) C[client] = { orders:0, revenue:0, first:Infinity, last:0 };
+      C[client].orders++; C[client].revenue += rev; C[client].last = Math.max(C[client].last, t); C[client].first = Math.min(C[client].first, t);
+    });
+    const days = ms => Math.floor((now - ms)/86400000);
+
+    // 1) Partner churn / at-risk
+    const partnersArr = Object.entries(P).filter(([n])=>n!=="—").map(([n,p]) => {
+      const quiet = days(p.last);
+      const trend = p.prev>0 ? Math.round(((p.recent-p.prev)/p.prev)*100) : (p.recent>0?100:0);
+      const status = quiet >= CHURN_DAYS ? "at-risk" : (quiet >= 30 ? "watch" : "active");
+      return { name:n, orders:p.orders, revenue:p.revenue, quiet, trend, status };
+    }).sort((a,b)=> b.quiet - a.quiet);
+    const atRisk = partnersArr.filter(p=>p.status==="at-risk");
+
+    // 2) Customer retention
+    const clientsArr = Object.values(C);
+    const totalClients = clientsArr.length;
+    const repeat = clientsArr.filter(c=>c.orders>1).length;
+    const repeatRate = totalClients ? Math.round(repeat/totalClients*100) : 0;
+    const returningRecent = Object.values(C).filter(c=>c.orders>1 && c.last>=cutoffRecent).length;
+    const newRecent = Object.values(C).filter(c=>c.orders===1 && c.last>=cutoffRecent).length;
+    const avgOrders = totalClients ? (anData.length/totalClients) : 0;
+
+    // 3) Top babysitters by revenue
+    const topBS = Object.entries(B).map(([n,x])=>({name:n, ...x})).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
+    // 4) Partner earnings
+    const partnerEarn = Object.entries(P).filter(([n])=>n!=="—").map(([n,p])=>({name:n, orders:p.orders, revenue:p.revenue, avg:p.orders?p.revenue/p.orders:0})).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
+
+    const statusPill = s => {
+      const map = { "at-risk":["#ef4444","At risk"], "watch":["#f59e0b","Watch"], "active":["#10b981","Active"] };
+      const [c,l] = map[s]||["#94a3b8",s];
+      return `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(c,0.16)};color:${c}">${l}</span>`;
+    };
+    const trendArrow = t => t>0 ? `<span style="color:#10b981">▲ ${t}%</span>` : (t<0 ? `<span style="color:#ef4444">▼ ${Math.abs(t)}%</span>` : `<span class="muted2">→ 0%</span>`);
+    const barRow = (label, val, max, color, right) => `<div class="flex items-center gap-2 mb-1.5">
+      <div class="text-xs truncate" style="width:150px" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+      <div class="flex-1 rounded-full h-3" style="background:var(--surface)"><div class="h-3 rounded-full" style="width:${max?(val/max*100).toFixed(0):0}%;background:${color}"></div></div>
+      <div class="text-xs font-semibold" style="width:96px;text-align:right">${right}</div></div>`;
+
+    const maxBSRev = Math.max(1, ...topBS.map(x=>x.revenue));
+    const maxPERev = Math.max(1, ...partnerEarn.map(x=>x.revenue));
+
+    const sec = document.getElementById("an-insights");
+    sec.innerHTML = `
+      <div style="grid-column:1/-1" class="mt-2 mb-1 text-sm font-bold" >Insights</div>
+
+      <div class="card rounded-2xl p-4" style="grid-column:1/-1">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold">Partner churn &amp; activity <span class="muted2 font-normal">(at-risk = no orders in ${CHURN_DAYS}+ days)</span></div>
+          <div class="text-xs">${atRisk.length} at risk · ${partnersArr.length} partners</div>
+        </div>
+        <div style="max-height:260px;overflow:auto">
+        <div class="flex text-[10px] uppercase tracking-wide muted2 font-semibold px-1 pb-1" style="border-bottom:1px solid var(--border)">
+          <div style="flex:1">Partner</div><div style="width:80px;text-align:right">Orders</div><div style="width:110px;text-align:right">Revenue</div><div style="width:110px;text-align:right">Last order</div><div style="width:90px;text-align:right">Trend 30d</div><div style="width:70px;text-align:right">Status</div></div>
+        ${partnersArr.map(p=>`<div class="flex items-center text-sm px-1 py-1.5" style="border-bottom:1px solid var(--border)">
+          <div style="flex:1" class="truncate">${escapeHtml(p.name)}</div>
+          <div style="width:80px;text-align:right">${p.orders}</div>
+          <div style="width:110px;text-align:right">${fmtSAR(p.revenue)}</div>
+          <div style="width:110px;text-align:right" class="${p.quiet>=CHURN_DAYS?'':''}">${p.quiet}d ago</div>
+          <div style="width:90px;text-align:right">${trendArrow(p.trend)}</div>
+          <div style="width:70px;text-align:right">${statusPill(p.status)}</div></div>`).join("")}
+        </div>
+      </div>
+
+      <div class="card rounded-2xl p-4">
+        <div class="text-sm font-semibold mb-3">Customer retention</div>
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <div><div class="text-[11px] muted2">Repeat rate</div><div class="text-2xl font-bold" style="color:#10b981">${repeatRate}%</div><div class="text-[10px] muted2">${repeat} of ${totalClients} clients returned</div></div>
+          <div><div class="text-[11px] muted2">Avg orders / client</div><div class="text-2xl font-bold">${(Math.round(avgOrders*10)/10)}</div></div>
+          <div><div class="text-[11px] muted2">Returning (30d)</div><div class="text-xl font-bold" style="color:#3b82f6">${returningRecent}</div></div>
+          <div><div class="text-[11px] muted2">New (30d)</div><div class="text-xl font-bold" style="color:var(--gold-dark)">${newRecent}</div></div>
+        </div>
+        <div class="text-[11px] muted2">Repeat customers are those with more than one order in the loaded period.</div>
+      </div>
+
+      <div class="card rounded-2xl p-4">
+        <div class="text-sm font-semibold mb-3">Top babysitters by revenue</div>
+        ${topBS.map(x=>barRow(x.name, x.revenue, maxBSRev, "#3b82f6", fmtSAR(x.revenue))).join("") || '<div class="muted2 text-sm">No data</div>'}
+      </div>
+
+      <div class="card rounded-2xl p-4" style="grid-column:1/-1">
+        <div class="text-sm font-semibold mb-3">Partner earning performance</div>
+        <div class="flex text-[10px] uppercase tracking-wide muted2 font-semibold px-1 pb-1" style="border-bottom:1px solid var(--border)">
+          <div style="flex:1">Partner</div><div style="width:80px;text-align:right">Orders</div><div style="width:120px;text-align:right">Total revenue</div><div style="width:120px;text-align:right">Avg / order</div></div>
+        ${partnerEarn.map(x=>`<div class="flex items-center text-sm px-1 py-1.5" style="border-bottom:1px solid var(--border)">
+          <div style="flex:1" class="truncate">${escapeHtml(x.name)}</div>
+          <div style="width:80px;text-align:right">${x.orders}</div>
+          <div style="width:120px;text-align:right;color:#10b981;font-weight:600">${fmtSAR(x.revenue)}</div>
+          <div style="width:120px;text-align:right">${fmtSAR(x.avg)}</div></div>`).join("")}
+      </div>
+    `;
   }
 
   // ---- Interactive chart detail modal (zoom + date range + category) ----
@@ -2687,6 +2806,7 @@ function setTabLoading(containerId, on) {
         const hB=(b.baby/max)*(H-PAD*2), hM=(b.med/max)*(H-PAD*2); const yB=H-PAD-hB, yM=yB-hM;
         return `<rect x="${x.toFixed(1)}" y="${yB.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hB).toFixed(1)}" fill="#3b82f6"><title>${k} Baby: ${b.baby}</title></rect>
           <rect x="${x.toFixed(1)}" y="${yM.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hM).toFixed(1)}" fill="#F6BD22"><title>${k} Med: ${b.med}</title></rect>
+          <text x="${(x+w/2).toFixed(1)}" y="${(yM-4).toFixed(1)}" font-size="10" font-weight="600" fill="var(--text-2)" text-anchor="middle">${b.orders>0?b.orders:""}</text>
           <text x="${(x+w/2).toFixed(1)}" y="${H-PAD+14}" font-size="9" fill="var(--text-3)" text-anchor="middle" transform="rotate(35 ${(x+w/2).toFixed(1)} ${H-PAD+14})">${anDetailGran==="week"?k.slice(-3):k.slice(2)}</text>`;
       }).join("");
     } else {
@@ -2696,6 +2816,7 @@ function setTabLoading(containerId, on) {
       bars = keys.map((k,i)=>{ const v=vals[i]; const h=(v/max)*(H-PAD*2); const x=PAD+i*bw+bw*0.15; const y=H-PAD-h;
         const disp = anDetailType==="revenue" ? fmtSAR(v) : v;
         return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw*0.7).toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" rx="3" fill="${color}"><title>${k}: ${disp}</title></rect>
+          <text x="${(x+bw*0.35).toFixed(1)}" y="${(y-4).toFixed(1)}" font-size="10" font-weight="600" fill="var(--text-2)" text-anchor="middle">${v>0?(anDetailType==="revenue"?Math.round(v):v):""}</text>
           <text x="${(x+bw*0.35).toFixed(1)}" y="${H-PAD+14}" font-size="9" fill="var(--text-3)" text-anchor="middle" transform="rotate(35 ${(x+bw*0.35).toFixed(1)} ${H-PAD+14})">${anDetailGran==="week"?k.slice(-3):k.slice(2)}</text>`;
       }).join("");
     }
