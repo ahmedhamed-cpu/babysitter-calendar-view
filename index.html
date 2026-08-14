@@ -530,7 +530,15 @@
           <button data-g="week" class="tkt-filter-btn" data-active="true">Weekly</button>
           <button data-g="month" class="tkt-filter-btn" data-active="false">Monthly</button>
         </div>
-        <span class="text-xs muted2">Performance across the loaded period. Admin only.</span>
+        <label class="text-xs muted2">From <input id="an-from" type="date" class="icon-input h-8 px-2 rounded-lg border brd text-sm"></label>
+        <label class="text-xs muted2">To <input id="an-to" type="date" class="icon-input h-8 px-2 rounded-lg border brd text-sm"></label>
+        <div id="an-quick" class="flex gap-1">
+          <button data-q="ytd" class="tkt-filter-btn" data-active="true">Year to date</button>
+          <button data-q="180" class="tkt-filter-btn" data-active="false">Last 180d</button>
+          <button data-q="all" class="tkt-filter-btn" data-active="false">All (this yr+)</button>
+        </div>
+        <button id="an-reload" class="tkt-filter-btn" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Apply</button>
+        <span id="an-range-note" class="text-xs muted2"></span>
       </div>
       <div id="an-body" class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));"></div>
       <div id="an-insights" class="grid gap-4 mt-4" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));"></div>
@@ -834,6 +842,7 @@
     slotTime:    ["Booked Slot Time","BookedSlotTime","Booked_Slot_Time","Slot Time","slotTime","Booking Time","Appointment Time","appointmentTime","Time","time"],
     nurseName:   ["Nurse Name","NurseName","Nurse_Name","nurseName","Nurse","Babysitter","Assigned Nurse"],
     customer:    ["User_Name","User Name","UserName","customerName","Customer Name","Customer","Client","Patient Name"],
+    userId:      ["User_ID","User ID","UserId","user_id","userId","Customer ID","CustomerID","customer_id","Patient ID"],
     customerPhone: ["Phone Number","Phone","phone","Customer Phone","customerPhone","Mobile","mobile","Contact Number","Phone No","phone_no"],
     pkg:         ["Package Name","Package Type 2","Package","packageName","Service","Package Type"],
     orderId:     ["orderId","Child Order ID","Order ID","order_id","docId"],
@@ -1015,14 +1024,38 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
     const partner = fieldVal(d, FIELD.homecare) || d.homecare || "";
     const sub = subcategoryOf(d);
     const price = revenueOf(d);
-    const labCost = labCostMap[_ck(pkg, lab)];
+
+    // Lab cost: a package may be a single named package OR a comma-separated list of
+    // individual biomarkers. Try the whole package name first; if that isn't in the
+    // price list, split on commas, price each biomarker against the same lab, and sum.
+    let labCost, haveLab, labParts = [], missingParts = [];
+    const whole = labCostMap[_ck(pkg, lab)];
+    if (whole !== undefined) {
+      labCost = whole; haveLab = true; labParts = [{ name: pkg, cost: whole }];
+    } else {
+      const tokens = String(pkg).split(/[,;]+/).map(t => t.trim()).filter(Boolean);
+      if (tokens.length > 1) {
+        let sum = 0, foundAny = false;
+        tokens.forEach(tok => {
+          const c = labCostMap[_ck(tok, lab)];
+          if (c !== undefined) { sum += c; foundAny = true; labParts.push({ name: tok, cost: c }); }
+          else { missingParts.push(tok); }
+        });
+        // "have" only if every biomarker was priced; partial = flag for review
+        haveLab = foundAny && missingParts.length === 0;
+        labCost = foundAny ? sum : undefined;
+      } else {
+        labCost = undefined; haveLab = false;
+      }
+    }
     const hcCharge = homecareCostMap[_ck(sub, partner)];
-    const haveLab = labCost !== undefined, haveHc = hcCharge !== undefined;
-    const lc = haveLab ? labCost : 0, hc = haveHc ? hcCharge : 0;
+    const haveHc = hcCharge !== undefined;
+    const lc = (labCost !== undefined) ? labCost : 0, hc = haveHc ? hcCharge : 0;
     const revenue = (price == null) ? null : (price - lc - hc);
     return {
       price, labCost: lc, hcCharge: hc, cost: lc + hc, revenue,
-      lab, partner, missingLab: !haveLab, missingHc: !haveHc,
+      lab, partner, labParts, missingParts,
+      missingLab: !haveLab, missingHc: !haveHc,
       review: (price == null) || !haveLab || !haveHc
     };
   }
@@ -2528,16 +2561,19 @@ function setTabLoading(containerId, on) {
     const week = 1 + Math.round(((d - firstThu)/86400000 - 3 + ((firstThu.getUTCDay()+6)%7))/7);
     return d.getUTCFullYear() + "-W" + String(week).padStart(2,"0");
   }
-  function loadAnalytics() {
+  function loadAnalytics(force) {
     if (!isAdmin) return;
-    if (anData) { renderAnalytics(); return; }
+    // Default the range to Jan 1 this year → today, on first open.
+    const fromEl = document.getElementById("an-from"), toEl = document.getElementById("an-to");
+    if (!fromEl.value) fromEl.value = new Date(nowR().getFullYear(), 0, 1).toISOString().slice(0,10);
+    if (!toEl.value) { const hi = new Date(nowR()); hi.setDate(hi.getDate()+14); toEl.value = hi.toISOString().slice(0,10); }
+    if (anData && !force) { renderAnalytics(); return; }
     if (anLoading) return;
     anLoading = true;
     document.getElementById("an-body").innerHTML = '<div class="p-8 text-center muted2 text-sm">Loading analytics…</div>';
-    // Fetch ~180 days back through 14 days forward.
-    const lo = new Date(nowR()); lo.setDate(lo.getDate()-180);
-    const hi = new Date(nowR()); hi.setDate(hi.getDate()+14);
-    const loS = lo.toISOString().slice(0,10), hiS = hi.toISOString().slice(0,10);
+    document.getElementById("an-insights").innerHTML = "";
+    const loS = fromEl.value, hiS = toEl.value;
+    document.getElementById("an-range-note").textContent = `${loS} → ${hiS}`;
     fetchPeriod(loS, hiS).then(rows => {
       anData = rows.filter(passStatus);
       anLoading = false;
@@ -2647,16 +2683,27 @@ function setTabLoading(containerId, on) {
     const C = {};   // client -> {orders, first, last, revenue}
     const cutoffRecent = now - 30*86400000;      // last 30 days
     const cutoffPrev = now - 60*86400000;        // 30-60 days ago
+    const Bmed = {};   // medical nurse -> {orders, revenue}
     anData.forEach(b => {
       const d = b.data; const dt = parseSlotDateTime(d); if (!dt) return;
-      const t = dt.getTime(); const rev = revenueOf(d) || 0;
+      const t = dt.getTime();
+      const sub = subcategoryOf(d);
+      const isMed = MEDICAL_CATS.has(sub);
+      // Medical revenue is net P&L (price − costs); babysitting uses price.
+      const rev = isMed ? ((medicalPnL(d).revenue) ?? 0) : (revenueOf(d) || 0);
       const partner = String(fieldVal(d, FIELD.homecare) || d.homecare || "—").trim() || "—";
-      const bs = displayName(fieldVal(d, FIELD.nurseName) || "—");
-      const client = String(fieldVal(d, FIELD.customer) || "").trim() || "Unknown";
+      const nurse = displayName(fieldVal(d, FIELD.nurseName) || "—");
+      // Unique customer key: prefer a stable User ID; fall back to name only if no ID.
+      const uid = String(fieldVal(d, FIELD.userId) || "").trim();
+      const client = uid || (String(fieldVal(d, FIELD.customer) || "").trim() || "Unknown");
       if (!P[partner]) P[partner] = { orders:0, revenue:0, last:0, first:Infinity, recent:0, prev:0 };
       P[partner].orders++; P[partner].revenue += rev; P[partner].last = Math.max(P[partner].last, t); P[partner].first = Math.min(P[partner].first, t);
       if (t >= cutoffRecent) P[partner].recent++; else if (t >= cutoffPrev) P[partner].prev++;
-      if (bs && bs !== "—") { if (!B[bs]) B[bs] = { orders:0, revenue:0, partner }; B[bs].orders++; B[bs].revenue += rev; }
+      if (nurse && nurse !== "—") {
+        const tgt = isMed ? Bmed : B;
+        if (!tgt[nurse]) tgt[nurse] = { orders:0, revenue:0, partner };
+        tgt[nurse].orders++; tgt[nurse].revenue += rev;
+      }
       if (!C[client]) C[client] = { orders:0, revenue:0, first:Infinity, last:0 };
       C[client].orders++; C[client].revenue += rev; C[client].last = Math.max(C[client].last, t); C[client].first = Math.min(C[client].first, t);
     });
@@ -2680,8 +2727,9 @@ function setTabLoading(containerId, on) {
     const newRecent = Object.values(C).filter(c=>c.orders===1 && c.last>=cutoffRecent).length;
     const avgOrders = totalClients ? (anData.length/totalClients) : 0;
 
-    // 3) Top babysitters by revenue
+    // 3) Top nurses by revenue — split babysitting vs medical
     const topBS = Object.entries(B).map(([n,x])=>({name:n, ...x})).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
+    const topMed = Object.entries(Bmed).map(([n,x])=>({name:n, ...x})).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
     // 4) Partner earnings
     const partnerEarn = Object.entries(P).filter(([n])=>n!=="—").map(([n,p])=>({name:n, orders:p.orders, revenue:p.revenue, avg:p.orders?p.revenue/p.orders:0})).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
 
@@ -2697,6 +2745,7 @@ function setTabLoading(containerId, on) {
       <div class="text-xs font-semibold" style="width:96px;text-align:right">${right}</div></div>`;
 
     const maxBSRev = Math.max(1, ...topBS.map(x=>x.revenue));
+    const maxMedRev = Math.max(1, ...topMed.map(x=>x.revenue));
     const maxPERev = Math.max(1, ...partnerEarn.map(x=>x.revenue));
 
     const sec = document.getElementById("an-insights");
@@ -2729,12 +2778,17 @@ function setTabLoading(containerId, on) {
           <div><div class="text-[11px] muted2">Returning (30d)</div><div class="text-xl font-bold" style="color:#3b82f6">${returningRecent}</div></div>
           <div><div class="text-[11px] muted2">New (30d)</div><div class="text-xl font-bold" style="color:var(--gold-dark)">${newRecent}</div></div>
         </div>
-        <div class="text-[11px] muted2">Repeat customers are those with more than one order in the loaded period.</div>
+        <div class="text-[11px] muted2">Repeat customers are unique users (by User ID) with more than one order in the loaded period.</div>
       </div>
 
       <div class="card rounded-2xl p-4">
         <div class="text-sm font-semibold mb-3">Top babysitters by revenue</div>
         ${topBS.map(x=>barRow(x.name, x.revenue, maxBSRev, "#3b82f6", fmtSAR(x.revenue))).join("") || '<div class="muted2 text-sm">No data</div>'}
+      </div>
+
+      <div class="card rounded-2xl p-4">
+        <div class="text-sm font-semibold mb-3">Top medical nurses by net revenue</div>
+        ${topMed.map(x=>barRow(x.name, x.revenue, maxMedRev, "#4C7A63", fmtSAR(x.revenue))).join("") || '<div class="muted2 text-sm">No medical data</div>'}
       </div>
 
       <div class="card rounded-2xl p-4" style="grid-column:1/-1">
@@ -2838,6 +2892,20 @@ function setTabLoading(containerId, on) {
     document.querySelectorAll("#an-gran .tkt-filter-btn").forEach(x => x.setAttribute("data-active", x===b?"true":"false"));
     renderAnalytics();
   }));
+  // Quick date-range presets
+  document.querySelectorAll("#an-quick .tkt-filter-btn").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll("#an-quick .tkt-filter-btn").forEach(x => x.setAttribute("data-active", x===b?"true":"false"));
+    const q = b.getAttribute("data-q");
+    const to = new Date(nowR()); to.setDate(to.getDate()+14);
+    let from;
+    if (q === "ytd") from = new Date(nowR().getFullYear(), 0, 1);
+    else if (q === "180") { from = new Date(nowR()); from.setDate(from.getDate()-180); }
+    else { from = new Date(nowR().getFullYear(), 0, 1); }   // "all" = start of year (data horizon)
+    document.getElementById("an-from").value = from.toISOString().slice(0,10);
+    document.getElementById("an-to").value = to.toISOString().slice(0,10);
+    loadAnalytics(true);
+  }));
+  { const rb = document.getElementById("an-reload"); if (rb) rb.addEventListener("click", () => loadAnalytics(true)); }
   // ==============================================================================
 
 
