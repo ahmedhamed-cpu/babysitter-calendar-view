@@ -31,6 +31,7 @@
   .card-lift:hover{transform:translateY(-4px);box-shadow:0 16px 40px rgba(31,42,68,.13)}
   .fade-in{animation:fade .5s ease both}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @keyframes ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
   .stagger>*{opacity:0;animation:fade .5s ease forwards}
   .avatar-ring{box-shadow:0 0 0 3px var(--paper),0 0 0 5px var(--sage)}
   .skill-chip{background:var(--sage-soft);color:var(--sage);border:1px solid #d3e4d9}
@@ -71,6 +72,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 // ---- Firebase config (same project; public page only ever READS publicProfiles) ----
 const firebaseConfig = {
@@ -85,20 +87,11 @@ const COLLECTION = "publicProfiles";
 const REQUESTS = "profileRequests";
 const TICKET_WEBHOOK = "https://feelvaleo.app.n8n.cloud/webhook/babysitter-ticket"; // notifies sales on Slack
 
-// Customer requests a caregiver -> writes to profileRequests + pings the team webhook.
+// Customer requests a caregiver -> pings the team webhook (Slack). No Firestore write.
 window.requestCaregiver = async function(profileId, profileName){
   const btn = document.getElementById("req-btn");
   if (btn){ btn.disabled = true; btn.textContent = "Sending your request…"; }
   const id = "REQ-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,6);
-  const rec = {
-    requestId: id, profileId, profileName,
-    status: "new", source: "public_gallery",
-    createdAt: new Date().toISOString(),
-    page: location.href
-  };
-  try {
-    await setDoc(doc(db, REQUESTS, id), rec);
-  } catch(e){ console.warn("request save:", e && e.code); }
   // fire team notification (Slack/email via n8n) — best effort, no-cors
   try {
     const payload = { ticketId:id, kind:"profile_request", direction:"to_ops", route:"ops",
@@ -130,11 +123,41 @@ function showThankYou(name){
 
 const app_el = document.getElementById("app");
 const backLink = document.getElementById("back-link");
+const auth = getAuth(app);
+let ADMIN_MODE = false;   // true only when signed in as a real admin (rules enforce writes)
+
+// Optional staff mode: open the page with #admin to sign in and reveal remove controls.
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    try { const tok = await user.getIdTokenResult(); ADMIN_MODE = (tok.claims.role === "admin" || tok.claims.role === "support"); }
+    catch(e){ ADMIN_MODE = false; }
+  } else ADMIN_MODE = false;
+  if (ADMIN_MODE) document.body.setAttribute("data-admin","1");
+  router();
+});
+
+window.staffSignIn = async function(){
+  const email = prompt("Valeo staff email:"); if(!email) return;
+  const pass = prompt("Password:"); if(!pass) return;
+  try { await signInWithEmailAndPassword(auth, email.trim(), pass); }
+  catch(e){ alert("Sign-in failed: " + (e.code||e.message)); }
+};
+
+window.unpublishProfile = async function(id, name){
+  if (!ADMIN_MODE) return;
+  if (!confirm("Remove \""+name+"\" from the public gallery?")) return;
+  try {
+    await setDoc(doc(db, "publicProfiles", id), { published:false, updatedAt:new Date().toISOString() }, { merge:true });
+    alert(name + " removed from the public gallery.");
+    location.hash = "#/gallery"; router();
+  } catch(e){ alert("Could not remove (need admin sign-in): " + (e.code||e.message)); }
+};
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 // ---------- tiny hash router ----------
 function router(){
   const hash = location.hash || "#/gallery";
+  if (/[#&]admin/.test(hash) && !ADMIN_MODE) { window.staffSignIn(); return; }
   const m = hash.match(/^#\/p\/(.+)$/);
   if (m) { backLink.classList.remove("hidden"); renderProfile(decodeURIComponent(m[1])); }
   else { backLink.classList.add("hidden"); renderGallery(); }
@@ -167,8 +190,36 @@ async function renderGallery(){
     profiles.sort((a,b)=>(a.order??999)-(b.order??999) || (b.rating||0)-(a.rating||0));
     if (!profiles.length){ errorMsg("No caregiver profiles are available right now."); return; }
 
+    const trials = profiles.filter(p => p.trialOffer);
+    const featured = profiles.filter(p => p.featured);
+
+    // Infinite-loop ticker announcing any trial offers
+    const tickerText = trials.length
+      ? trials.map(t => `✨ Limited trial — 4 hours with ${esc(t.name)}${t.trialDiscount?(" at "+esc(t.trialDiscount)):" at a special rate"}. Request today!`).join("      •      ")
+      : "";
+    const ticker = trials.length ? `
+      <div class="mb-6 rounded-full overflow-hidden" style="background:var(--ink)">
+        <div style="display:flex;white-space:nowrap;overflow:hidden">
+          <div style="display:inline-flex;gap:3rem;padding:9px 0;animation:ticker 22s linear infinite;color:var(--gold);font-weight:600;font-size:13px">
+            <span>${tickerText}</span><span>${tickerText}</span>
+          </div>
+        </div>
+      </div>` : "";
+
+    // Featured cards strip
+    const featuredSection = featured.length ? `
+      <section class="mb-8">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-xs font-bold tracking-[.14em] uppercase px-2.5 py-1 rounded-full" style="background:var(--gold);color:var(--ink)">★ Featured this week</span>
+        </div>
+        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(270px,1fr))">
+          ${featured.map((p,i)=>cardHTML(p,i,true)).join("")}
+        </div>
+      </section>` : "";
+
     app_el.innerHTML = `
-      <section class="fade-in mb-9 rounded-3xl px-7 py-10 sm:px-10 sm:py-12" style="background:linear-gradient(135deg, var(--cream) 0%, var(--sage-soft) 100%);border:1px solid var(--line)">
+      ${ticker}
+      <section class="fade-in mb-8 rounded-3xl px-7 py-10 sm:px-10 sm:py-12" style="background:linear-gradient(135deg, var(--cream) 0%, var(--sage-soft) 100%);border:1px solid var(--line)">
         <div class="inline-flex items-center gap-2 text-xs font-bold tracking-[.14em] uppercase mb-4 px-3 py-1 rounded-full" style="background:var(--gold-soft);color:var(--gold-deep)">
           <span>♥</span> Handpicked for your family
         </div>
@@ -179,6 +230,8 @@ async function renderGallery(){
           Every professional below is personally verified by the Valeo team. Browse their experience, skills, and what families say, then tell us who feels right and we'll take care of the rest.
         </p>
       </section>
+      ${featuredSection}
+      ${featured.length?`<div class="text-xs font-bold tracking-[.14em] uppercase mb-3" style="color:var(--muted)">All caregivers</div>`:""}
       <div class="stagger grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(270px,1fr))">
         ${profiles.map((p,i)=>cardHTML(p,i)).join("")}
       </div>`;
@@ -190,14 +243,16 @@ async function renderGallery(){
   }
 }
 
-function cardHTML(p,i){
+function cardHTML(p,i,inFeatured){
   const photo = p.photoUrl
     ? `<img src="${esc(p.photoUrl)}" alt="${esc(p.name)}" class="w-full h-full object-cover" loading="lazy" />`
     : `<div class="w-full h-full flex items-center justify-center display text-4xl" style="background:var(--sage-soft);color:var(--sage)">${esc((p.name||"?").slice(0,1))}</div>`;
   const skills = (p.skills||[]).slice(0,3).map(s=>`<span class="skill-chip text-[11px] px-2 py-0.5 rounded-full">${esc(s)}</span>`).join(" ");
-  return `<a href="#/p/${encodeURIComponent(p.id)}" class="card-lift block rounded-2xl overflow-hidden bg-white" style="border:1px solid var(--line);text-decoration:none">
+  const trialRibbon = p.trialOffer ? `<span class="absolute top-3 left-3 text-[11px] font-bold px-2 py-1 rounded-full" style="background:var(--gold);color:var(--ink)">✨ Trial ${p.trialDiscount?esc(p.trialDiscount):"offer"}</span>` : "";
+  return `<a href="#/p/${encodeURIComponent(p.id)}" class="card-lift block rounded-2xl overflow-hidden bg-white" style="border:1px solid ${p.trialOffer?'var(--gold)':'var(--line)'};text-decoration:none">
     <div class="relative" style="aspect-ratio:4/3;background:var(--sage-soft)">
       ${photo}
+      ${trialRibbon}
       ${p.verified?`<span class="absolute top-3 right-3 text-[11px] font-bold px-2 py-1 rounded-full" style="background:var(--ink);color:var(--gold)">✓ Valeo Verified</span>`:""}
     </div>
     <div class="p-4">
@@ -249,6 +304,7 @@ async function renderProfile(id){
         </div>
         <button id="req-btn" onclick="requestCaregiver('${esc(p.id)}','${esc(p.name)}')" class="btn-primary w-full mt-4 rounded-xl py-3 font-semibold">Request this caregiver</button>
         <p class="text-[11px] text-center mt-2" style="color:var(--muted)">Our team will confirm availability with you.</p>
+        ${ADMIN_MODE?`<button onclick="unpublishProfile('${esc(p.id)}','${esc(p.name)}')" class="w-full mt-2 rounded-xl py-2 text-sm font-semibold" style="background:rgba(239,68,68,.1);color:#dc2626;border:1px solid rgba(239,68,68,.3)">✕ Remove from public gallery (staff)</button>`:""}
       </aside>
 
       <!-- right: story -->
