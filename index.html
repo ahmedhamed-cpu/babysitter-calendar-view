@@ -503,6 +503,49 @@
     </div>
   </div>
 
+  <!-- Bridge: publish a babysitter to the public profiles gallery -->
+  <div id="pub-modal" class="modal-backdrop hidden">
+    <div class="modal-card card rounded-2xl p-5 w-full" style="max-width:560px;max-height:90vh;overflow-y:auto">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="font-bold text-lg">Publish to public gallery</h3>
+        <button id="pub-close" class="muted2 hover:opacity-70 text-xl leading-none">&times;</button>
+      </div>
+      <p class="text-xs muted2 mb-3">Only the fields below are made public. No phone numbers, client data, or internal notes are ever shared.</p>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs muted2 block mb-1">Display name</label><input id="pub-name" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" /></div>
+        <div><label class="text-xs muted2 block mb-1">City</label><input id="pub-city" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" /></div>
+        <div class="col-span-2"><label class="text-xs muted2 block mb-1">Photo URL</label><input id="pub-photo" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" placeholder="https://… (Firebase Storage)" /></div>
+        <div class="col-span-2"><label class="text-xs muted2 block mb-1">Headline</label><input id="pub-headline" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" placeholder="Certified Nanny · 6 years experience" /></div>
+        <div class="col-span-2"><label class="text-xs muted2 block mb-1">Bio</label><textarea id="pub-bio" rows="3" class="icon-input w-full px-2 py-2 rounded-lg border brd text-sm"></textarea></div>
+        <div><label class="text-xs muted2 block mb-1">Skills (comma-separated)</label><input id="pub-skills" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" placeholder="Newborn care, CPR certified" /></div>
+        <div><label class="text-xs muted2 block mb-1">Languages (comma-separated)</label><input id="pub-langs" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" placeholder="Arabic, English" /></div>
+        <div><label class="text-xs muted2 block mb-1">Rating (0–5)</label><input id="pub-rating" type="number" step="0.1" min="0" max="5" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" /></div>
+        <div><label class="text-xs muted2 block mb-1">Experience (years)</label><input id="pub-exp" type="number" min="0" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" /></div>
+      </div>
+      <div class="flex flex-wrap items-center gap-4 mt-3 p-3 rounded-lg" style="background:var(--surface)">
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="pub-verified" /> Valeo Verified</label>
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="pub-featured" /> Featured (banner)</label>
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="pub-trial" /> Trial offer</label>
+        <div id="pub-trial-wrap" class="hidden"><label class="text-xs muted2 mr-1">Trial discount</label><input id="pub-trial-discount" class="icon-input h-8 px-2 rounded-lg border brd text-sm" style="width:120px" placeholder="e.g. 50% · 4h" /></div>
+      </div>
+      <div class="flex items-center gap-2 mt-3">
+        <label class="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" id="pub-published" checked /> Published (visible to customers)</label>
+      </div>
+      <p id="pub-err" class="hidden text-xs mt-2" style="color:#ef4444"></p>
+      <div id="pub-link-box" class="hidden mt-3 p-3 rounded-lg text-sm" style="background:var(--gold-soft);border:1px solid var(--gold-soft-bd)">
+        <div class="text-xs muted2 mb-1">Shareable link</div>
+        <div class="flex items-center gap-2">
+          <input id="pub-link" readonly class="icon-input flex-1 h-8 px-2 rounded-lg border brd text-xs" />
+          <button id="pub-copy" class="h-8 px-3 rounded-lg text-xs font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Copy</button>
+        </div>
+      </div>
+      <div class="flex gap-2 mt-4">
+        <button id="pub-save" class="flex-1 px-3 py-2.5 rounded-lg text-sm font-semibold" style="background:var(--gold);color:#12151C">Publish &amp; generate link</button>
+        <button id="pub-unpublish" class="hidden px-3 py-2.5 rounded-lg text-sm font-semibold" style="background:rgba(239,68,68,0.12);color:#ef4444;border:1px solid rgba(239,68,68,0.35)">Unpublish</button>
+      </div>
+    </div>
+  </div>
+
   <div id="cand-modal" class="modal-backdrop hidden">
     <div class="modal-card card rounded-2xl p-5 w-full" style="max-width:460px">
       <div class="flex items-center justify-between mb-3">
@@ -3282,8 +3325,100 @@ function setTabLoading(containerId, on) {
   { const ts = document.getElementById("tkt-search"); if (ts) ts.addEventListener("input", e => { tktSearch = e.target.value; renderTickets(); }); }
 
   // ---------- BABYSITTER PROFILES ----------
+  // ===================== PUBLIC PROFILE BRIDGE (admin) =====================
+  // Publishes ONLY safe fields into publicProfiles; generates a shareable link.
+  const PUBLIC_PROFILE_BASE = "https://ahmedhamed-cpu.github.io/babysitter-calendar-view/caregivers.html#/gallery"; // TODO: set your hosted URL
+  const pubSlugify = n => "bs_" + String(n||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,60);
+  let pubCurrentId = null;
+
+  async function openPubModal(slug, name, agency, city) {
+    if (!isAdmin) return;
+    pubCurrentId = pubSlugify(name);
+    // prefill from any existing public doc, else from the babysitter's known fields
+    let existing = null;
+    try { const snap = await getDoc(doc(db, "publicProfiles", pubCurrentId)); if (snap.exists()) existing = snap.data(); } catch(e){}
+    const g = id => document.getElementById(id);
+    g("pub-name").value = (existing?.name) || name || "";
+    g("pub-city").value = (existing?.city) ?? (city || "");
+    g("pub-photo").value = existing?.photoUrl || "";
+    g("pub-headline").value = existing?.headline || "";
+    g("pub-bio").value = existing?.bio || "";
+    g("pub-skills").value = (existing?.skills || []).join(", ");
+    g("pub-langs").value = (existing?.languages || []).join(", ");
+    g("pub-rating").value = existing?.rating ?? "";
+    g("pub-exp").value = existing?.experienceYears ?? "";
+    g("pub-verified").checked = existing?.verified ?? true;
+    g("pub-featured").checked = existing?.featured ?? false;
+    g("pub-trial").checked = existing?.trialOffer ?? false;
+    g("pub-trial-discount").value = existing?.trialDiscount || "";
+    g("pub-trial-wrap").classList.toggle("hidden", !g("pub-trial").checked);
+    g("pub-published").checked = existing ? (existing.published !== false) : true;
+    g("pub-err").classList.add("hidden");
+    g("pub-link-box").classList.toggle("hidden", !existing);
+    g("pub-unpublish").classList.toggle("hidden", !existing);
+    if (existing) g("pub-link").value = PUBLIC_PROFILE_BASE + "#/p/" + pubCurrentId;
+    g("pub-modal").classList.remove("hidden");
+  }
+
+  async function savePublicProfile() {
+    if (!isAdmin || !pubCurrentId) return;
+    const g = id => document.getElementById(id);
+    const err = g("pub-err");
+    const name = g("pub-name").value.trim();
+    if (!name) { err.textContent = "Display name is required."; err.classList.remove("hidden"); return; }
+    const rec = {
+      profileId: pubCurrentId,
+      name,
+      city: g("pub-city").value.trim(),
+      photoUrl: g("pub-photo").value.trim(),
+      headline: g("pub-headline").value.trim(),
+      bio: g("pub-bio").value.trim(),
+      skills: g("pub-skills").value.split(",").map(s=>s.trim()).filter(Boolean),
+      languages: g("pub-langs").value.split(",").map(s=>s.trim()).filter(Boolean),
+      rating: g("pub-rating").value === "" ? null : Number(g("pub-rating").value),
+      experienceYears: g("pub-exp").value === "" ? null : Number(g("pub-exp").value),
+      verified: g("pub-verified").checked,
+      featured: g("pub-featured").checked,
+      trialOffer: g("pub-trial").checked,
+      trialDiscount: g("pub-trial").checked ? g("pub-trial-discount").value.trim() : "",
+      published: g("pub-published").checked,
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUserEmail || "admin"
+    };
+    const btn = g("pub-save"); btn.disabled = true; btn.textContent = "Publishing…";
+    try {
+      await setDoc(doc(db, "publicProfiles", pubCurrentId), rec, { merge: true });
+      const link = PUBLIC_PROFILE_BASE + "#/p/" + pubCurrentId;
+      g("pub-link").value = link;
+      g("pub-link-box").classList.remove("hidden");
+      g("pub-unpublish").classList.remove("hidden");
+      logActivity(rec.published ? "Profile published" : "Profile saved (unpublished)", "", name + (rec.featured?" · featured":"") + (rec.trialOffer?" · trial":""));
+    } catch (e) {
+      console.error("publish failed:", e);
+      err.textContent = "Could not publish. If 'permission-denied', check publicProfiles write rules for admins.";
+      err.classList.remove("hidden");
+    } finally { btn.disabled = false; btn.textContent = "Publish & generate link"; }
+  }
+
+  async function unpublishProfile() {
+    if (!isAdmin || !pubCurrentId) return;
+    try {
+      await setDoc(doc(db, "publicProfiles", pubCurrentId), { published: false, updatedAt: new Date().toISOString() }, { merge: true });
+      document.getElementById("pub-published").checked = false;
+      logActivity("Profile unpublished", "", pubCurrentId);
+      document.getElementById("pub-modal").classList.add("hidden");
+    } catch (e) { console.error("unpublish failed:", e); alert("Could not unpublish. Check rules."); }
+  }
+
+  // wiring
+  { const c=document.getElementById("pub-close"); if(c) c.addEventListener("click", ()=>document.getElementById("pub-modal").classList.add("hidden")); }
+  { const s=document.getElementById("pub-save"); if(s) s.addEventListener("click", savePublicProfile); }
+  { const u=document.getElementById("pub-unpublish"); if(u) u.addEventListener("click", unpublishProfile); }
+  { const t=document.getElementById("pub-trial"); if(t) t.addEventListener("change", e=>document.getElementById("pub-trial-wrap").classList.toggle("hidden", !e.target.checked)); }
+  { const cp=document.getElementById("pub-copy"); if(cp) cp.addEventListener("click", ()=>{ const l=document.getElementById("pub-link"); l.select(); try{navigator.clipboard.writeText(l.value);}catch(e){document.execCommand("copy");} cp.textContent="Copied!"; setTimeout(()=>cp.textContent="Copy",1500); }); }
+  // =========================================================================
+
   function renderProfiles() {
-    let all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
     // Homecare partners only see (and manage) their own agency's babysitters.
     if (isHomecare) all = all.filter(u => (u.agency || "").toLowerCase() === (currentAgency || "").toLowerCase());
     // Toolbar filters now apply to Profiles too — fast agency/city/engagement narrowing.
@@ -3340,6 +3475,7 @@ function setTabLoading(containerId, on) {
             <div class="text-[11px] muted2 truncate">${u.schedule?escapeHtml(u.schedule):"—"}</div></div>
           <div class="flex items-center gap-1.5 shrink-0">${currentBadge}${iqamaBadge}</div>
           <span class="text-xs font-medium shrink-0 ${u.active?"text-emerald-600":"muted2"}">${u.active?"Active":"Inactive"}</span>
+          ${isAdmin ? `<button class="pub-btn shrink-0 text-[11px] font-semibold px-2 py-1 rounded-lg" style="background:var(--gold-soft);color:var(--gold-dark);border:1px solid var(--gold-soft-bd)" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" title="Publish to public gallery">Share ↗</button>` : ""}
           ${(isAdmin || isHomecare) ? `<div class="switch" draggable="false" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>` : ""}
         </div>`;
       });
@@ -3351,6 +3487,11 @@ function setTabLoading(containerId, on) {
       : (isHomecare
         ? `Toggle your babysitters on/off — turning one off hides her and her bookings from the calendar. Reordering is admin-only.`
         : `View-only access — you can see every babysitter's profile, but editing, reordering, and on/off toggles are limited to admins.`);
+
+    document.querySelectorAll("#profiles-list .pub-btn").forEach(b => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openPubModal(b.getAttribute("data-slug"), b.getAttribute("data-name"), b.getAttribute("data-agency"), b.getAttribute("data-city"));
+    }));
 
     document.querySelectorAll("#profiles-list .switch").forEach(sw => sw.addEventListener("click", async () => {
       if (!isAdmin && !isHomecare) return;
