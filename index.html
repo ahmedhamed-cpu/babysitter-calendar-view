@@ -3419,6 +3419,7 @@ function setTabLoading(containerId, on) {
   // =========================================================================
 
   function renderProfiles() {
+    let all = Object.values(bsUniverse).sort((a,b) => (a.agency||"~").localeCompare(b.agency||"~") || a.name.localeCompare(b.name));
     // Homecare partners only see (and manage) their own agency's babysitters.
     if (isHomecare) all = all.filter(u => (u.agency || "").toLowerCase() === (currentAgency || "").toLowerCase());
     // Toolbar filters now apply to Profiles too — fast agency/city/engagement narrowing.
