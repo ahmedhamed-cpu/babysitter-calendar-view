@@ -1012,7 +1012,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
         labCostMap = m; if (viewMode === "revenue") renderRevenue();
       }, (e) => console.warn("labCosts listener:", e && e.code));
       onSnapshot(collection(db, "homecareCosts"), (snap) => {
-        const m = {}; snap.forEach(r => { const x = r.data(); m[_ck(x.serviceType, x.partner)] = Number(x.charge)||0; });
+        const m = {}; snap.forEach(r => { const x = r.data(); const key = x.serviceName || x.serviceType; if (key) m[_ck(key, x.partner)] = Number(x.charge)||0; });
         homecareCostMap = m; if (viewMode === "revenue") renderRevenue();
       }, (e) => console.warn("homecareCosts listener:", e && e.code));
     } catch (e) { console.warn("cost listeners setup:", e); }
@@ -1023,40 +1023,48 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
     const lab = fieldVal(d, FIELD.lab) || "";
     const partner = fieldVal(d, FIELD.homecare) || d.homecare || "";
     const sub = subcategoryOf(d);
-    const price = revenueOf(d);
+    // Gross = Total Amount (list price from Metabase); fall back to finalPrice if absent.
+    const gross = (listPriceOf(d) != null) ? listPriceOf(d) : revenueOf(d);
+    const isLabOrder = /lab package/i.test(sub) || /blood|panel|test|biomarker/i.test(pkg);
 
-    // Lab cost: a package may be a single named package OR a comma-separated list of
-    // individual biomarkers. Try the whole package name first; if that isn't in the
-    // price list, split on commas, price each biomarker against the same lab, and sum.
-    let labCost, haveLab, labParts = [], missingParts = [];
-    const whole = labCostMap[_ck(pkg, lab)];
-    if (whole !== undefined) {
-      labCost = whole; haveLab = true; labParts = [{ name: pkg, cost: whole }];
-    } else {
-      const tokens = String(pkg).split(/[,;]+/).map(t => t.trim()).filter(Boolean);
-      if (tokens.length > 1) {
-        let sum = 0, foundAny = false;
-        tokens.forEach(tok => {
-          const c = labCostMap[_ck(tok, lab)];
-          if (c !== undefined) { sum += c; foundAny = true; labParts.push({ name: tok, cost: c }); }
-          else { missingParts.push(tok); }
-        });
-        // "have" only if every biomarker was priced; partial = flag for review
-        haveLab = foundAny && missingParts.length === 0;
-        labCost = foundAny ? sum : undefined;
-      } else {
-        labCost = undefined; haveLab = false;
+    let labCost = 0, haveLab = true, labParts = [], missingParts = [];
+    let hcCharge = 0, haveHc = true, hcBasis = "";
+
+    if (isLabOrder) {
+      // Lab order: lab cost (whole package OR summed biomarkers) + Sample Collection homecare charge.
+      const whole = labCostMap[_ck(pkg, lab)];
+      if (whole !== undefined) { labCost = whole; labParts = [{ name: pkg, cost: whole }]; }
+      else {
+        const tokens = String(pkg).split(/[,;]+/).map(t=>t.trim()).filter(Boolean);
+        if (tokens.length >= 1) {
+          let sum=0, foundAny=false;
+          tokens.forEach(tok => { const c = labCostMap[_ck(tok, lab)]; if (c!==undefined){ sum+=c; foundAny=true; labParts.push({name:tok,cost:c}); } else missingParts.push(tok); });
+          haveLab = foundAny && missingParts.length===0; labCost = foundAny?sum:0;
+          if (!foundAny) haveLab = false;
+        } else haveLab = false;
       }
+      // homecare = Sample Collection cost for this partner
+      const sc = homecareCostMap[_ck("Sample Collection", partner)];
+      if (sc !== undefined) { hcCharge = sc; hcBasis = "Sample Collection"; } else { haveHc = false; }
+    } else {
+      // IV / Injection / Physio / Rehab: NO lab cost. Homecare = the service's own cost by name × partner.
+      haveLab = true; labCost = 0; labParts = [];
+      const svc = homecareCostMap[_ck(pkg, partner)];
+      if (svc !== undefined) { hcCharge = svc; hcBasis = pkg; }
+      else { haveHc = false; }
     }
-    const hcCharge = homecareCostMap[_ck(sub, partner)];
-    const haveHc = hcCharge !== undefined;
-    const lc = (labCost !== undefined) ? labCost : 0, hc = haveHc ? hcCharge : 0;
-    const revenue = (price == null) ? null : (price - lc - hc);
+
+    const net = (gross == null) ? null : (gross - labCost - hcCharge);
+    const missing = [];
+    if (gross == null) missing.push("gross (Total Amount)");
+    if (!haveLab) missing.push(missingParts.length ? ("lab cost for: " + missingParts.join(", ")) : "lab cost");
+    if (!haveHc) missing.push("homecare charge (" + (isLabOrder ? "Sample Collection" : pkg) + " × " + (partner||"?") + ")");
+
     return {
-      price, labCost: lc, hcCharge: hc, cost: lc + hc, revenue,
-      lab, partner, labParts, missingParts,
-      missingLab: !haveLab, missingHc: !haveHc,
-      review: (price == null) || !haveLab || !haveHc
+      gross, price: gross, labCost, hcCharge, cost: labCost + hcCharge, revenue: net,
+      lab, partner, labParts, missingParts, hcBasis, isLabOrder,
+      missingLab: !haveLab, missingHc: !haveHc, missing,
+      review: (gross == null) || !haveLab || !haveHc
     };
   }
   const categoryOf    = d => String(fieldVal(d, CATEGORY_FIELDS) || "").trim();
@@ -2302,7 +2310,7 @@ function setTabLoading(containerId, on) {
     const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
 
     if (medMode) {
-      // Medical P&L: Revenue = Final Price − Lab Cost − Homecare Charge (per order).
+      // Medical P&L: Net = Gross (Total Amount) − Lab Cost − Homecare Charge (per order).
       const totPrice = sum(rows, r=>r.price);
       const totLab = sum(rows, r=>r.labCost), totHc = sum(rows, r=>r.hcCharge);
       const totCost = totLab + totHc;
@@ -2310,17 +2318,24 @@ function setTabLoading(containerId, on) {
       const margin = totPrice ? (totRev/totPrice*100) : 0;
       const noCosts = (Object.keys(labCostMap).length===0 && Object.keys(homecareCostMap).length===0);
       const missing = rows.filter(r=>r.missingLab||r.missingHc).length;
+      // Month-over-month: compare this month's net vs the previous month (from periodBookings).
+      const prevMk = (()=>{ const [y,m]=mk.split("-").map(Number); const d=new Date(Date.UTC(y,m-2,1)); return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0"); })();
+      let prevRev = 0, prevAny = false;
+      periodBookings.forEach(b => { const st=parseSlotDateTime(b.data); if(!st||monthKeyOf(st)!==prevMk) return; if(!passNonStatus(b)) return; prevAny=true; const pl=medicalPnL(b.data); prevRev += (pl.revenue||0); });
+      const momPct = prevAny && prevRev !== 0 ? Math.round(((totRev - prevRev)/Math.abs(prevRev))*1000)/10 : null;
+      const momStr = momPct===null ? "—" : (momPct>0?"+":"") + momPct + "%";
       document.getElementById("rev-summary").innerHTML =
         tile("Orders", rows.length) +
-        tile("Gross (Final Price)", fmtSAR(totPrice)) +
+        tile("Gross (Total Amount)", fmtSAR(totPrice)) +
         tile("Lab cost", fmtSAR(totLab), "#ef4444") +
         tile("Homecare cost", fmtSAR(totHc), "#ef4444") +
         tile("Net revenue", fmtSAR(totRev), "#10b981") +
         tile("Margin %", (Math.round(margin*10)/10) + "%", margin>=0?"#10b981":"#ef4444") +
+        tile("vs last month", momStr, momPct===null?"":(momPct>=0?"#10b981":"#ef4444")) +
         tile("Missing cost", missing, missing?"#f59e0b":"");
       document.getElementById("rev-note").innerHTML = noCosts
-        ? `<b style="color:#f59e0b">No cost data loaded yet.</b> Net revenue currently equals gross until the <code>labCosts</code> and <code>homecareCosts</code> collections are populated (run the cost-sync). Once loaded: Net = Final Price − Lab Cost (by package + Lab1) − Homecare Charge (by service type + Homecare partner), per Child Order ID.`
-        : `Medical P&amp;L per Child Order ID: <b>Net = Final Price − Lab Cost − Homecare Charge</b>. Lab cost looked up by package + Lab1; homecare charge by service type + partner. ⚑ = missing a cost (falls back to 0 until added to the sheet/sync).`;
+        ? `<b style="color:#f59e0b">No cost data loaded yet.</b> Net currently equals gross until the <code>labCosts</code> and <code>homecareCosts</code> collections are populated. Once loaded: Net = Gross (Total Amount) − Lab Cost − Homecare Charge, per Child Order ID.`
+        : `Medical P&amp;L per Child Order ID: <b>Net = Gross (Total Amount) − Lab Cost − Homecare Charge</b>. Lab orders: summed biomarker costs (by Lab1) + Sample-Collection charge. IV / Physio / Injection: the service's own homecare cost, no lab cost. Hover ⚑ to see exactly what cost is missing. "vs last month" compares net revenue to the prior month.`;
     } else {
       const totBill = sum(rows, r=>r.billable), totCost = sum(rows, r=>r.cost);
       const totRev = sum(rows, r=> r.revenue||0), totMargin = totRev - totCost;
@@ -2370,7 +2385,7 @@ function setTabLoading(containerId, on) {
           <div class="w-[96px] shrink-0 px-2 py-2 text-right border-r brd2" style="color:#ef4444">${r.missingHc?'<span title=\"missing\">⚑ 0</span>':fmtSAR(r.hcCharge)}</div>
           <div class="w-[100px] shrink-0 px-2 py-2 text-right border-r brd2 font-semibold" style="color:#10b981">${r.revenue==null?'—':fmtSAR(r.revenue)}</div>
           <div class="w-[64px] shrink-0 px-2 py-2 text-right border-r brd2" style="color:${mp>=0?'#10b981':'#ef4444'}">${r.price?(Math.round(mp*10)/10+'%'):'—'}</div>
-          <div class="w-[40px] shrink-0 px-2 py-2 text-center">${r.review?'<span title="Missing cost or price" style="color:#f59e0b">⚑</span>':''}</div></div>`;
+          <div class="w-[40px] shrink-0 px-2 py-2 text-center">${r.review?`<span title="Missing: ${escapeHtml((r.missing||['cost']).join('; '))}" style="color:#f59e0b;cursor:help">⚑</span>`:''}</div></div>`;
       });
       const marginPct = tG ? (tN/tG*100) : 0;
       mh += `<div class="flex border-t-2 brd items-center text-sm font-bold" style="background:var(--surface)">
