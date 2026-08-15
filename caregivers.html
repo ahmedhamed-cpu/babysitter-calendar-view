@@ -76,7 +76,7 @@ import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https:/
 
 // ---- Firebase config (same project; public page only ever READS publicProfiles) ----
 const firebaseConfig = {
-  apiKey: "AIzaSyB5OShyCIKMqu5RijdCKhohu4uB7yzARIY",
+  apiKey: "REPLACE_WITH_WEB_API_KEY",
   authDomain: "bs-calendar-view.firebaseapp.com",
   projectId: "bs-calendar-view",
   storageBucket: "bs-calendar-view.appspot.com"
@@ -87,21 +87,110 @@ const COLLECTION = "publicProfiles";
 const REQUESTS = "profileRequests";
 const TICKET_WEBHOOK = "https://feelvaleo.app.n8n.cloud/webhook/babysitter-ticket"; // notifies sales on Slack
 
-// Customer requests a caregiver -> pings the team webhook (Slack). No Firestore write.
-window.requestCaregiver = async function(profileId, profileName){
-  const btn = document.getElementById("req-btn");
-  if (btn){ btn.disabled = true; btn.textContent = "Sending your request…"; }
+// Standard packages for the request form dropdown
+const REQUEST_PACKAGES = [
+  "Hourly Babysitting : 4 Hours",
+  "Hourly Babysitting : 6 Hours",
+  "Hourly Babysitting : 8 Hours",
+  "Hourly Babysitting : 10 Hours",
+  "Weekly plan",
+  "Monthly plan",
+  "Elderly Care",
+  "Other / not sure"
+];
+const REQUEST_SLOTS = ["Morning (8AM-12PM)","Afternoon (12PM-4PM)","Evening (4PM-8PM)","Night (8PM-12AM)","Full day","Flexible"];
+let reqLocation = null;   // {lat, lng, url}
+
+// Step 1: open the details form for the chosen caregiver.
+window.requestCaregiver = function(profileId, profileName){
+  reqLocation = null;
+  const today = new Date().toISOString().slice(0,10);
+  const overlay = document.createElement("div");
+  overlay.id = "req-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(26,34,56,.55);backdrop-filter:blur(3px);overflow-y:auto";
+  overlay.innerHTML = `
+    <div class="fade-in" style="max-width:460px;width:100%;background:var(--card);border-radius:22px;padding:24px;box-shadow:0 24px 60px rgba(0,0,0,.3);margin:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <div class="display" style="font-size:1.3rem;font-weight:700;color:var(--ink)">Request ${esc(profileName)}</div>
+        <button id="req-x" style="background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;line-height:1">&times;</button>
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px">Share a few details and our team will confirm availability with you.</p>
+      <div style="display:grid;gap:10px">
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Your name *</label><input id="rf-name" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:11px;font-size:14px" /></div>
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Email *</label><input id="rf-email" type="email" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:11px;font-size:14px" /></div>
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Phone</label><input id="rf-phone" type="tel" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:11px;font-size:14px" /></div>
+        <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Package</label>
+          <select id="rf-package" style="width:100%;height:42px;padding:0 10px;border:1px solid var(--line);border-radius:11px;font-size:14px;background:#fff">${REQUEST_PACKAGES.map(p=>`<option>${esc(p)}</option>`).join("")}</select></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Date</label><input id="rf-date" type="date" min="${today}" value="${today}" style="width:100%;height:42px;padding:0 10px;border:1px solid var(--line);border-radius:11px;font-size:14px" /></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Time slot</label><select id="rf-slot" style="width:100%;height:42px;padding:0 8px;border:1px solid var(--line);border-radius:11px;font-size:14px;background:#fff">${REQUEST_SLOTS.map(s=>`<option>${esc(s)}</option>`).join("")}</select></div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Your location * (so we can serve you)</label>
+          <button id="rf-loc-btn" type="button" style="width:100%;height:44px;border:1px dashed var(--sage);border-radius:11px;background:var(--sage-soft);color:var(--sage);font-weight:600;font-size:14px;cursor:pointer">📍 Share my location</button>
+          <div id="rf-loc-status" style="font-size:12px;margin-top:5px;color:var(--muted)"></div>
+        </div>
+      </div>
+      <p id="rf-err" style="display:none;color:#dc2626;font-size:13px;margin-top:10px"></p>
+      <button id="rf-submit" style="width:100%;margin-top:16px;background:var(--ink);color:#fff;border:none;border-radius:13px;padding:13px;font-weight:600;font-size:15px;cursor:pointer">Submit request</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  document.getElementById("req-x").addEventListener("click", close);
+  overlay.addEventListener("click", e => { if(e.target===overlay) close(); });
+
+  // GPS capture
+  document.getElementById("rf-loc-btn").addEventListener("click", () => {
+    const st = document.getElementById("rf-loc-status");
+    if (!navigator.geolocation){ st.textContent = "Location not supported on this device — please type your area in the notes."; return; }
+    st.textContent = "Getting your location…";
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const lat = pos.coords.latitude.toFixed(6), lng = pos.coords.longitude.toFixed(6);
+        reqLocation = { lat, lng, url: `https://maps.google.com/?q=${lat},${lng}` };
+        document.getElementById("rf-loc-btn").textContent = "✓ Location captured";
+        document.getElementById("rf-loc-btn").style.background = "#e7f0ea";
+        st.innerHTML = `Location saved · <a href="${reqLocation.url}" target="_blank" style="color:var(--sage);text-decoration:underline">view</a>`;
+      },
+      err => { st.textContent = "Couldn't get location ("+err.message+"). Please allow location access and retry."; },
+      { enableHighAccuracy:true, timeout:10000 }
+    );
+  });
+
+  document.getElementById("rf-submit").addEventListener("click", () => submitRequest(profileId, profileName, close));
+};
+
+function submitRequest(profileId, profileName, close){
+  const g = id => document.getElementById(id);
+  const err = g("rf-err");
+  const name = g("rf-name").value.trim(), email = g("rf-email").value.trim();
+  const phone = g("rf-phone").value.trim(), pkg = g("rf-package").value, date = g("rf-date").value, slot = g("rf-slot").value;
+  if (!name){ err.textContent = "Please enter your name."; err.style.display="block"; return; }
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err.textContent = "Please enter a valid email."; err.style.display="block"; return; }
+  if (!reqLocation){ err.textContent = "Please share your location (tap the button above)."; err.style.display="block"; return; }
+  err.style.display="none";
+  const btn = g("rf-submit"); btn.disabled=true; btn.textContent="Sending…";
   const id = "REQ-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,6);
-  // fire team notification (Slack/email via n8n) — best effort, no-cors
+  const msg = `New customer request from the public gallery.
+Caregiver: ${profileName} (${profileId})
+Customer: ${name}
+Email: ${email}
+Phone: ${phone||"—"}
+Package: ${pkg}
+When: ${date} · ${slot}
+Location: ${reqLocation.url} (${reqLocation.lat}, ${reqLocation.lng})
+Please follow up via Freshchat to confirm availability.`;
   try {
     const payload = { ticketId:id, kind:"profile_request", direction:"to_ops", route:"ops",
-      category:"Customer profile request", subject:"Customer requested: " + profileName,
-      message:"A customer requested this caregiver from the public gallery. Caregiver: " + profileName + " | Profile: " + profileId + ". Please follow up via Freshchat to confirm availability.",
-      profileId, profileName };
+      category:"Customer profile request", subject:"Request: "+profileName+" — "+name,
+      message: msg, profileId, profileName,
+      customerName:name, customerEmail:email, customerPhone:phone, package:pkg, date, slot,
+      locationUrl:reqLocation.url, lat:reqLocation.lat, lng:reqLocation.lng };
     fetch(TICKET_WEBHOOK, { method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain;charset=UTF-8"}, body: JSON.stringify(payload) }).catch(()=>{});
   } catch(e){}
+  close();
   showThankYou(profileName);
-};
+}
 
 function showThankYou(name){
   const overlay = document.createElement("div");
