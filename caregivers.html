@@ -32,6 +32,13 @@
   .fade-in{animation:fade .5s ease both}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   @keyframes ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  .sel-check{position:absolute;top:10px;left:10px;z-index:5;width:30px;height:30px;border-radius:9px;background:rgba(255,255,255,.92);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+  .sel-check input{position:absolute;opacity:0;width:100%;height:100%;cursor:pointer;margin:0}
+  .sel-mark{color:var(--muted);font-weight:800;font-size:15px;opacity:.35;transition:.15s}
+  .sel-check input:checked ~ .sel-mark{color:var(--sage);opacity:1}
+  .sel-check:has(input:checked){background:var(--sage-soft);border-color:var(--sage)}
+  #sel-bar{position:fixed;left:50%;transform:translateX(-50%) translateY(120%);bottom:20px;z-index:50;transition:transform .28s cubic-bezier(.2,.8,.2,1);background:var(--ink);color:#fff;border-radius:16px;padding:12px 16px;display:flex;align-items:center;gap:14px;box-shadow:0 16px 40px rgba(0,0,0,.35);max-width:calc(100vw - 32px)}
+  #sel-bar.show{transform:translateX(-50%) translateY(0)}
   .stagger>*{opacity:0;animation:fade .5s ease forwards}
   .avatar-ring{box-shadow:0 0 0 3px var(--paper),0 0 0 5px var(--sage)}
   .skill-chip{background:var(--sage-soft);color:var(--sage);border:1px solid #d3e4d9}
@@ -59,6 +66,12 @@
 </header>
 
 <main id="app" class="max-w-6xl mx-auto px-5 py-8"></main>
+
+<div id="sel-bar">
+  <span id="sel-count" style="font-weight:600;font-size:14px"></span>
+  <button onclick="clearSelection()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:13px;cursor:pointer;text-decoration:underline">Clear</button>
+  <button onclick="requestSelected()" style="background:var(--gold);color:var(--ink);border:none;border-radius:11px;padding:9px 16px;font-weight:700;font-size:14px;cursor:pointer">Request these caregivers →</button>
+</div>
 
 <footer class="mt-10" style="background:var(--ink)">
   <div class="max-w-6xl mx-auto px-5 py-9 text-center">
@@ -100,10 +113,42 @@ const REQUEST_PACKAGES = [
 ];
 const REQUEST_SLOTS = ["Morning (8AM-12PM)","Afternoon (12PM-4PM)","Evening (4PM-8PM)","Night (8PM-12AM)","Full day","Flexible"];
 let reqLocation = null;   // {lat, lng, url}
+const selected = new Map();   // id -> name
 
-// Step 1: open the details form for the chosen caregiver.
+// ----- Multi-select on the gallery -----
+window.toggleSelect = function(box){
+  if (box.checked) selected.set(box.getAttribute("data-id"), box.getAttribute("data-name"));
+  else selected.delete(box.getAttribute("data-id"));
+  updateSelBar();
+};
+window.clearSelection = function(){
+  selected.clear();
+  document.querySelectorAll(".sel-box").forEach(b => b.checked = false);
+  updateSelBar();
+};
+function updateSelBar(){
+  const bar = document.getElementById("sel-bar"), cnt = document.getElementById("sel-count");
+  if (!bar) return;
+  if (selected.size > 0){ cnt.textContent = selected.size + (selected.size===1?" caregiver selected":" caregivers selected"); bar.classList.add("show"); }
+  else bar.classList.remove("show");
+}
+window.requestSelected = function(){
+  if (selected.size === 0) return;
+  const list = [...selected.entries()].map(([id,name]) => ({ id, name }));
+  openRequestForm(list);
+};
+
+// Single-caregiver entry point (from a profile page) reuses the same form.
 window.requestCaregiver = function(profileId, profileName){
+  openRequestForm([{ id: profileId, name: profileName }]);
+};
+
+// Step 1: open the details form for one OR several caregivers.
+function openRequestForm(caregivers){
   reqLocation = null;
+  const multi = caregivers.length > 1;
+  const title = multi ? `Request ${caregivers.length} caregivers` : `Request ${esc(caregivers[0].name)}`;
+  const chips = multi ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${caregivers.map(c=>`<span style="background:var(--sage-soft);color:var(--sage);font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px">${esc(c.name)}</span>`).join("")}</div>` : "";
   const today = new Date().toISOString().slice(0,10);
   const overlay = document.createElement("div");
   overlay.id = "req-overlay";
@@ -111,10 +156,11 @@ window.requestCaregiver = function(profileId, profileName){
   overlay.innerHTML = `
     <div class="fade-in" style="max-width:460px;width:100%;background:var(--card);border-radius:22px;padding:24px;box-shadow:0 24px 60px rgba(0,0,0,.3);margin:auto">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <div class="display" style="font-size:1.3rem;font-weight:700;color:var(--ink)">Request ${esc(profileName)}</div>
+        <div class="display" style="font-size:1.3rem;font-weight:700;color:var(--ink)">${title}</div>
         <button id="req-x" style="background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;line-height:1">&times;</button>
       </div>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:14px">Share a few details and our team will confirm availability with you.</p>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:${multi?"10px":"14px"}">${multi?"Our team will check availability across your selected caregivers and confirm with you.":"Share a few details and our team will confirm availability with you."}</p>
+      ${chips}
       <div style="display:grid;gap:10px">
         <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Your name *</label><input id="rf-name" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:11px;font-size:14px" /></div>
         <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:3px">Email *</label><input id="rf-email" type="email" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:11px;font-size:14px" /></div>
@@ -157,10 +203,10 @@ window.requestCaregiver = function(profileId, profileName){
     );
   });
 
-  document.getElementById("rf-submit").addEventListener("click", () => submitRequest(profileId, profileName, close));
-};
+  document.getElementById("rf-submit").addEventListener("click", () => submitRequest(caregivers, close));
+}
 
-function submitRequest(profileId, profileName, close){
+function submitRequest(caregivers, close){
   const g = id => document.getElementById(id);
   const err = g("rf-err");
   const name = g("rf-name").value.trim(), email = g("rf-email").value.trim();
@@ -171,8 +217,11 @@ function submitRequest(profileId, profileName, close){
   err.style.display="none";
   const btn = g("rf-submit"); btn.disabled=true; btn.textContent="Sending…";
   const id = "REQ-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,6);
+  const names = caregivers.map(c=>c.name).join(", ");
+  const ids = caregivers.map(c=>c.id).join(", ");
+  const label = caregivers.length>1 ? "Caregivers ("+caregivers.length+"): " : "Caregiver: ";
   const msg = `New customer request from the public gallery.
-Caregiver: ${profileName} (${profileId})
+${label}${names} (${ids})
 Customer: ${name}
 Email: ${email}
 Phone: ${phone||"—"}
@@ -182,14 +231,25 @@ Location: ${reqLocation.url} (${reqLocation.lat}, ${reqLocation.lng})
 Please follow up via Freshchat to confirm availability.`;
   try {
     const payload = { ticketId:id, kind:"profile_request", direction:"to_ops", route:"ops",
-      category:"Customer profile request", subject:"Request: "+profileName+" — "+name,
-      message: msg, profileId, profileName,
+      category:"Customer profile request", subject:"Request: "+names+" — "+name,
+      message: msg,
+      profileId: ids, profileName: names, caregiverCount: caregivers.length,
       customerName:name, customerEmail:email, customerPhone:phone, package:pkg, date, slot,
       locationUrl:reqLocation.url, lat:reqLocation.lat, lng:reqLocation.lng };
     fetch(TICKET_WEBHOOK, { method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain;charset=UTF-8"}, body: JSON.stringify(payload) }).catch(()=>{});
   } catch(e){}
+  // Minimal record for the dashboard Requests inbox (tiny doc; also a backup if Slack misses one).
+  try {
+    setDoc(doc(db, REQUESTS, id), {
+      requestId:id, caregivers: caregivers.map(c=>({id:c.id,name:c.name})), caregiverNames:names,
+      customerName:name, customerEmail:email, customerPhone:phone,
+      package:pkg, date, slot, locationUrl:reqLocation.url,
+      status:"new", createdAt:new Date().toISOString()
+    }).catch(()=>{});
+  } catch(e){}
   close();
-  showThankYou(profileName);
+  clearSelection();
+  showThankYou(names);
 }
 
 function showThankYou(name){
@@ -338,7 +398,12 @@ function cardHTML(p,i,inFeatured){
     : `<div class="w-full h-full flex items-center justify-center display text-4xl" style="background:var(--sage-soft);color:var(--sage)">${esc((p.name||"?").slice(0,1))}</div>`;
   const skills = (p.skills||[]).slice(0,3).map(s=>`<span class="skill-chip text-[11px] px-2 py-0.5 rounded-full">${esc(s)}</span>`).join(" ");
   const trialRibbon = p.trialOffer ? `<span class="absolute top-3 left-3 text-[11px] font-bold px-2 py-1 rounded-full" style="background:var(--gold);color:var(--ink)">✨ Trial ${p.trialDiscount?esc(p.trialDiscount):"offer"}</span>` : "";
-  return `<a href="#/p/${encodeURIComponent(p.id)}" class="card-lift block rounded-2xl overflow-hidden bg-white" style="border:1px solid ${p.trialOffer?'var(--gold)':'var(--line)'};text-decoration:none">
+  return `<div class="card-wrap relative">
+    <label class="sel-check" onclick="event.stopPropagation()" title="Select to request together">
+      <input type="checkbox" class="sel-box" data-id="${esc(p.id)}" data-name="${esc(p.name)}" onchange="toggleSelect(this)" />
+      <span class="sel-mark">✓</span>
+    </label>
+    <a href="#/p/${encodeURIComponent(p.id)}" class="card-lift block rounded-2xl overflow-hidden bg-white" style="border:1px solid ${p.trialOffer?'var(--gold)':'var(--line)'};text-decoration:none">
     <div class="relative" style="aspect-ratio:4/3;background:var(--sage-soft)">
       ${photo}
       ${trialRibbon}
@@ -353,7 +418,7 @@ function cardHTML(p,i,inFeatured){
       <div class="flex flex-wrap gap-1.5 mt-3">${skills}</div>
       <div class="mt-4 text-sm font-semibold" style="color:var(--gold-deep)">View full profile →</div>
     </div>
-  </a>`;
+  </a></div>`;
 }
 
 // ---------- INDIVIDUAL PROFILE ----------
