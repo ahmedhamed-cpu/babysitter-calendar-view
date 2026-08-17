@@ -313,6 +313,7 @@
       <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
       <button id="view-neworders" class="view-btn" data-view="neworders" data-active="false">New Orders <span id="neworders-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#F6BD22;color:#12151C">0</span></button>
+      <button id="view-requests" class="view-btn staff-tab-only" data-view="requests" data-active="false">Requests <span id="requests-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#4C7A63;color:#fff">0</span></button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
       <button id="view-activity" class="view-btn admin-tab-only" data-view="activity" data-active="false">Activity</button>
       <button id="view-analytics" class="view-btn admin-tab-only" data-view="analytics" data-active="false">Analytics</button>
@@ -566,6 +567,20 @@
       <button id="cand-submit" class="w-full mt-2 px-3 py-2.5 rounded-lg text-sm font-semibold" style="background:var(--btn-active-bg);color:var(--btn-active-text)">Add candidate</button>
     </div>
   </div>
+
+  <div id="requests-container" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div id="rq-filter" class="flex gap-1">
+          <button data-rq="new" class="tkt-filter-btn" data-active="true">New</button>
+          <button data-rq="contacted" class="tkt-filter-btn" data-active="false">Contacted</button>
+          <button data-rq="closed" class="tkt-filter-btn" data-active="false">Closed</button>
+          <button data-rq="all" class="tkt-filter-btn" data-active="false">All</button>
+        </div>
+        <input id="rq-search" type="text" placeholder="Search customer, caregiver, email…" class="icon-input h-9 px-3 rounded-lg border brd text-sm" style="min-width:220px" />
+        <span id="rq-count" class="text-xs muted2"></span>
+      </div>
+      <div id="rq-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))"></div>
+    </div>
 
   <div id="analytics-container" class="hidden">
       <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -1047,6 +1062,29 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   // ---- Medical cost lookups (loaded live from Firestore: labCosts + homecareCosts) ----
   // labCosts key = "packagename|lab"  (lowercased);  homecareCosts key = "servicetype|partner"
   let labCostMap = {}, homecareCostMap = {};
+  // ---- Cost-lookup name normalizers ----
+  // Order data and the cost sheet use different names. These maps translate the ORDER's
+  // partner/service name into the exact name used in the cost sheet, before lookup.
+  // Add a line for every partner/service that appears in orders. Left = order value
+  // (lowercased), Right = the exact sheet name.  Anything not listed passes through unchanged.
+  const PARTNER_COST_ALIAS = {
+    // "taib":            "Taib",              // <-- if Taib gets its own cost rows, map here
+    // "taibah care hc":  "Taibah Care HC",    // <-- add to the sheet & map here
+    // "medlab":          "MedLab",
+    // "almasan hc":      "Al Masan HC",
+    // "mutmaen":         "Motmaeen",
+    // "al badr":         "Al badr"
+    // ... fill from your partner list
+  };
+  const SERVICE_COST_ALIAS = {
+    // Broad order package  ->  exact sheet service name
+    // "physiotherapy":            "Physiotherapy - Standard",     // <-- pick the sheet row that represents a generic physio
+    // "iv hydration express ksa": "IV Hydration Express",
+    // ... fill for each service seen in orders
+  };
+  const normPartner = p => PARTNER_COST_ALIAS[String(p||"").trim().toLowerCase()] || p;
+  const normService = s => SERVICE_COST_ALIAS[String(s||"").trim().toLowerCase()] || s;
+
   const _ck = (a, b) => (String(a||"").trim().toLowerCase() + "|" + String(b||"").trim().toLowerCase());
   function startCostListeners() {
     try {
@@ -1065,6 +1103,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
     const pkg = fieldVal(d, FIELD.pkg) || "";
     const lab = fieldVal(d, FIELD.lab) || "";
     const partner = fieldVal(d, FIELD.homecare) || d.homecare || "";
+    const nPartner = normPartner(partner);   // translated to the cost-sheet's partner name
     const sub = subcategoryOf(d);
     // Gross = Total Amount (list price from Metabase); fall back to finalPrice if absent.
     const gross = (listPriceOf(d) != null) ? listPriceOf(d) : revenueOf(d);
@@ -1087,13 +1126,13 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
         } else haveLab = false;
       }
       // homecare = Sample Collection cost for this partner
-      const sc = homecareCostMap[_ck("Sample Collection", partner)];
+      const sc = homecareCostMap[_ck("Sample Collection", nPartner)];
       if (sc !== undefined) { hcCharge = sc; hcBasis = "Sample Collection"; } else { haveHc = false; }
     } else {
       // IV / Injection / Physio / Rehab: NO lab cost. Homecare = the service's own cost by name × partner.
       haveLab = true; labCost = 0; labParts = [];
-      const svc = homecareCostMap[_ck(pkg, partner)];
-      if (svc !== undefined) { hcCharge = svc; hcBasis = pkg; }
+      const svc = homecareCostMap[_ck(normService(pkg), nPartner)];
+      if (svc !== undefined) { hcCharge = svc; hcBasis = normService(pkg); }
       else { haveHc = false; }
     }
 
@@ -1943,9 +1982,9 @@ function setTabLoading(containerId, on) {
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics") ? "none" : "flex";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics" || viewMode === "requests") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container","requests-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
@@ -1961,6 +2000,7 @@ function setTabLoading(containerId, on) {
     if (viewMode === "analytics") { show("analytics-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Analytics"; loadAnalytics(); return; }
     if (viewMode === "activity") { show("activity-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Activity log"; renderActivity(); return; }
     if (viewMode === "neworders") { show("neworders-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "New order requests"; renderNewOrders(); return; }
+    if (viewMode === "requests") { show("requests-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Customer requests"; renderRequests(); return; }
     if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
 
     const scope = scopeNonStatus();
@@ -2606,6 +2646,88 @@ function setTabLoading(containerId, on) {
     else { document.getElementById("tkt-chat").classList.add("hidden"); document.getElementById("tkt-chat-empty").classList.remove("hidden"); }
   }
   let activitySearch = "";
+
+  // ======================= CUSTOMER REQUESTS INBOX (staff) =======================
+  let custRequests = [];
+  let rqFilter = "new";
+  let rqSearch = "";
+  function startRequestsListener() {
+    if (!isStaff) return;
+    try {
+      onSnapshot(collection(db, "profileRequests"), (snap) => {
+        const out = []; snap.forEach(r => out.push({ id:r.id, ...r.data() }));
+        custRequests = out;
+        const newCount = out.filter(r => (r.status||"new")==="new").length;
+        const badge = document.getElementById("requests-badge");
+        if (badge){ if(newCount>0){ badge.textContent=newCount; badge.classList.remove("hidden"); } else badge.classList.add("hidden"); }
+        if (viewMode === "requests") renderRequests();
+      }, (e)=>console.warn("requests listener:", e && e.code));
+    } catch(e){ console.warn("requests listener setup:", e); }
+  }
+  function requestsForFilter() {
+    const q = rqSearch.trim().toLowerCase();
+    return custRequests.filter(r => {
+      const st = r.status || "new";
+      if (rqFilter !== "all" && st !== rqFilter) return false;
+      if (q) {
+        const hay = `${r.customerName||""} ${r.customerEmail||""} ${r.caregiverNames||""} ${r.customerPhone||""} ${r.package||""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  }
+  function rqStatusMeta(st){
+    st = st || "new";
+    if (st==="new") return {label:"New", color:"#4C7A63"};
+    if (st==="contacted") return {label:"Contacted", color:"#3b82f6"};
+    if (st==="closed") return {label:"Closed", color:"#94a3b8"};
+    return {label:st, color:"#94a3b8"};
+  }
+  function renderRequests() {
+    const list = requestsForFilter();
+    document.getElementById("rq-count").textContent = list.length + (list.length===1?" request":" requests");
+    const wrap = document.getElementById("rq-list");
+    if (!list.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">No customer requests here yet.</div>'; return; }
+    wrap.innerHTML = list.map(r => {
+      const m = rqStatusMeta(r.status);
+      const cgs = (r.caregivers && r.caregivers.length) ? r.caregivers.map(c=>escapeHtml(c.name)).join(", ") : escapeHtml(r.caregiverNames||"—");
+      const when = r.createdAt ? fmtRelative(new Date(r.createdAt).getTime()) : "";
+      return `<div class="card rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-semibold text-sm" style="color:var(--text)">${escapeHtml(r.customerName||"—")}</span>
+          <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(m.color,0.16)};color:${m.color}">${m.label}</span>
+        </div>
+        <div class="text-xs muted2 mb-2">${escapeHtml(when)}</div>
+        <div class="text-sm mb-2"><span class="muted2">Wants:</span> <b>${cgs}</b></div>
+        <div class="grid grid-cols-2 gap-1 text-xs mb-2">
+          <div><span class="muted2">Email</span><br><a href="mailto:${escapeHtml(r.customerEmail||"")}" style="color:var(--gold-dark)">${escapeHtml(r.customerEmail||"—")}</a></div>
+          <div><span class="muted2">Phone</span><br>${escapeHtml(r.customerPhone||"—")}</div>
+          <div><span class="muted2">Package</span><br>${escapeHtml(r.package||"—")}</div>
+          <div><span class="muted2">When</span><br>${escapeHtml(r.date||"—")}${r.slot?" · "+escapeHtml(r.slot):""}</div>
+        </div>
+        ${r.locationUrl?`<a href="${escapeHtml(r.locationUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold" style="color:var(--sage)">📍 View location</a>`:""}
+        <div class="flex gap-1.5 mt-3">
+          ${(r.status!=="contacted")?`<button class="rq-act text-xs font-semibold px-2 py-1 rounded" data-id="${r.id}" data-st="contacted" style="background:rgba(59,130,246,.12);color:#3b82f6">Mark contacted</button>`:""}
+          ${(r.status!=="closed")?`<button class="rq-act text-xs font-semibold px-2 py-1 rounded" data-id="${r.id}" data-st="closed" style="background:rgba(148,163,184,.15);color:var(--text-2)">Close</button>`:""}
+        </div>
+      </div>`;
+    }).join("");
+    wrap.querySelectorAll(".rq-act").forEach(b => b.addEventListener("click", () => setRequestStatus(b.getAttribute("data-id"), b.getAttribute("data-st"))));
+  }
+  async function setRequestStatus(id, st) {
+    if (!isStaff) return;
+    try { await updateDoc(doc(db, "profileRequests", id), { status:st, updatedAt:new Date().toISOString(), updatedBy:currentUserEmail||"staff" });
+      logActivity("Customer request " + st, "", id);
+    } catch(e){ console.error("request status:", e); alert("Could not update. Check profileRequests rules."); }
+  }
+  document.querySelectorAll("#rq-filter .tkt-filter-btn").forEach(b => b.addEventListener("click", () => {
+    rqFilter = b.getAttribute("data-rq");
+    document.querySelectorAll("#rq-filter .tkt-filter-btn").forEach(x=>x.setAttribute("data-active", x===b?"true":"false"));
+    renderRequests();
+  }));
+  { const rs=document.getElementById("rq-search"); if(rs) rs.addEventListener("input", e=>{ rqSearch=e.target.value; renderRequests(); }); }
+  // ==============================================================================
+
 
   // ============================ ANALYTICS (admin only) ============================
   let anGran = "week";
@@ -3327,12 +3449,12 @@ function setTabLoading(containerId, on) {
   // ---------- BABYSITTER PROFILES ----------
   // ===================== PUBLIC PROFILE BRIDGE (admin) =====================
   // Publishes ONLY safe fields into publicProfiles; generates a shareable link.
-  const PUBLIC_PROFILE_BASE = "https://ahmedhamed-cpu.github.io/babysitter-calendar-view/caregivers.html#/gallery"; // GitHub Pages URL — set username/repo
+  const PUBLIC_PROFILE_BASE = "https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO/valeo-profiles.html"; // GitHub Pages URL — set username/repo
   const pubSlugify = n => "bs_" + String(n||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,60);
   let pubCurrentId = null;
 
   async function openPubModal(slug, name, agency, city) {
-    if (!isAdmin) return;
+    if (!canPublish) return;
     pubCurrentId = pubSlugify(name);
     // prefill from any existing public doc, else from the babysitter's known fields
     let existing = null;
@@ -3361,7 +3483,7 @@ function setTabLoading(containerId, on) {
   }
 
   async function savePublicProfile() {
-    if (!isAdmin || !pubCurrentId) return;
+    if (!canPublish || !pubCurrentId) return;
     const g = id => document.getElementById(id);
     const err = g("pub-err");
     const name = g("pub-name").value.trim();
@@ -3401,7 +3523,7 @@ function setTabLoading(containerId, on) {
   }
 
   async function unpublishProfile() {
-    if (!isAdmin || !pubCurrentId) return;
+    if (!canPublish || !pubCurrentId) return;
     try {
       await setDoc(doc(db, "publicProfiles", pubCurrentId), { published: false, updatedAt: new Date().toISOString() }, { merge: true });
       document.getElementById("pub-published").checked = false;
@@ -3476,7 +3598,7 @@ function setTabLoading(containerId, on) {
             <div class="text-[11px] muted2 truncate">${u.schedule?escapeHtml(u.schedule):"—"}</div></div>
           <div class="flex items-center gap-1.5 shrink-0">${currentBadge}${iqamaBadge}</div>
           <span class="text-xs font-medium shrink-0 ${u.active?"text-emerald-600":"muted2"}">${u.active?"Active":"Inactive"}</span>
-          ${isAdmin ? `<button class="pub-btn shrink-0 text-[11px] font-semibold px-2 py-1 rounded-lg" style="background:var(--gold-soft);color:var(--gold-dark);border:1px solid var(--gold-soft-bd)" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" title="Publish to public gallery">Share ↗</button>` : ""}
+          ${canPublish ? `<button class="pub-btn shrink-0 text-[11px] font-semibold px-2 py-1 rounded-lg" style="background:var(--gold-soft);color:var(--gold-dark);border:1px solid var(--gold-soft-bd)" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" title="Publish to public gallery">Share ↗</button>` : ""}
           ${(isAdmin || isHomecare) ? `<div class="switch" draggable="false" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>` : ""}
         </div>`;
       });
@@ -3942,7 +4064,8 @@ function setTabLoading(containerId, on) {
 
    function setView(mode) {
     if (isHomecare && !["day","week","range","tickets","profiles","neworders"].includes(mode)) mode = "day";      // homecare
-    if (!isAdmin && ["compliance","revenue","activity","analytics"].includes(mode)) mode = "day";                             // support: no compliance/revenue
+    if (!isAdmin && ["compliance","revenue","activity","analytics"].includes(mode)) mode = "day";
+    if (!isStaff && mode === "requests") mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
@@ -3958,6 +4081,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("view-activity").addEventListener("click", () => setView("activity"));
   document.getElementById("view-neworders").addEventListener("click", () => setView("neworders"));
   document.getElementById("view-analytics").addEventListener("click", () => setView("analytics"));
+  document.getElementById("view-requests").addEventListener("click", () => setView("requests"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
@@ -4350,6 +4474,7 @@ function setTabLoading(containerId, on) {
     if (appStarted) return; appStarted = true;
     startTicketsListener();
     startNewOrdersListener();
+    startRequestsListener();
     startCostListeners();
     // Admin-only audit trail listener (rules restrict reads to admins).
     if (isAdmin) {
@@ -4489,7 +4614,7 @@ function setTabLoading(containerId, on) {
   }
   let currentRole = "homecare";
   let currentAgency = "";
-  let isAdmin = false, isStaff = false, isHomecare = false;
+  let isAdmin = false, isStaff = false, isHomecare = false, canPublish = false;
   let currentUserEmail = "";
 
   const loginOverlay = document.getElementById("login-overlay");
@@ -4567,13 +4692,17 @@ function setTabLoading(containerId, on) {
     } catch (e) { alert("Couldn't read claims: " + e.message); }
   });
 
-  onAuthStateChanged(auth, (user) => {
+  onAuthStateChanged(auth, async (user) => {
     if (user) {
       currentUserEmail = user.email || "";
       currentRole = roleOf(currentUserEmail);
       isAdmin  = currentRole === "admin";
       isStaff  = currentRole === "admin" || currentRole === "support";
       isHomecare = currentRole === "homecare";
+      // Publisher capability: admins always; others via a canPublish custom claim (grant/revoke per person).
+      try { const _r = await user.getIdTokenResult(); canPublish = isAdmin || _r.claims.canPublish === true; }
+      catch(e){ canPublish = isAdmin; }
+      document.body.classList.toggle("can-publish", canPublish);
       currentAgency = isHomecare ? (HOMECARE_AGENCY[currentUserEmail.toLowerCase()] || "") : "";
       document.body.classList.remove("role-admin", "role-support", "role-homecare", "viewer");
       document.body.classList.add("role-" + currentRole);
