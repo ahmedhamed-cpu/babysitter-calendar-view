@@ -326,6 +326,19 @@
       <span>Month</span><input type="month" id="rev-month" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
       <span class="ml-2 admin-only">Agency rate</span>
       <div class="flex items-center gap-1 admin-only"><input type="number" id="rev-rate" min="0" step="0.5" class="icon-input h-9 px-2 rounded-lg border brd text-sm w-20 text-right" /><span>SAR/hr</span></div>
+      <button id="rev-missing-btn" class="admin-only hidden ml-2 h-9 px-3 rounded-lg text-sm font-semibold" style="background:rgba(245,158,11,0.14);color:#b8860b;border:1px solid rgba(245,158,11,0.35)" title="List every partner × service combo with no cost">⚑ Missing costs</button>
+    </div>
+
+    <!-- Missing-costs diagnostic modal -->
+    <div id="missing-modal" class="modal-backdrop hidden">
+      <div class="modal-card card rounded-2xl p-5 w-full" style="max-width:640px;max-height:82vh;overflow-y:auto">
+        <div class="flex items-center justify-between mb-1">
+          <h3 class="font-bold text-lg">Missing cost combinations</h3>
+          <button id="missing-close" class="muted2 hover:opacity-70 text-xl leading-none">&times;</button>
+        </div>
+        <p class="text-xs muted2 mb-3">Medical orders in the selected month whose lab or homecare cost couldn't be found. Add these to the cost sheet (then re-run the cost-sync) to resolve them.</p>
+        <div id="missing-body"></div>
+      </div>
     </div>
     <div id="bucket-filter" class="hidden view-tabs inline-flex items-center gap-1">
       <button data-bucket="all" class="view-btn" data-active="true">All</button>
@@ -1068,19 +1081,26 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
   // Add a line for every partner/service that appears in orders. Left = order value
   // (lowercased), Right = the exact sheet name.  Anything not listed passes through unchanged.
   const PARTNER_COST_ALIAS = {
-    // "taib":            "Taib",              // <-- if Taib gets its own cost rows, map here
-    // "taibah care hc":  "Taibah Care HC",    // <-- add to the sheet & map here
-    // "medlab":          "MedLab",
-    // "almasan hc":      "Al Masan HC",
-    // "mutmaen":         "Motmaeen",
-    // "al badr":         "Al badr"
-    // ... fill from your partner list
+    // order name (lowercased)  ->  exact sheet partner name
+    "almasan hc":            "Al Masan HC",
+    "medlab":                "Medlab",
+    "al badr":               "Al badr",
+    "seha hc":               "Seha",
+    "hala hc":               "Hala",
+    "vitality hc":           "Vitality",
+    "alhaya":                "Al Haya",
+    "mutmaen":               "Motmaeen",
+    "wareed - ksa riyadh":   "Wareed",
+    "delta lab ksa":         "Delta",
+    "ruaa medical services": "RUMD"    // CONFIRM: is Ruaa the same partner as RUMD?
+    // --- No cost rows in the sheet yet (will flag until added): ---
+    // "canadian medical center", "taibah care hc", "imed", "nifas hc", "taib", "farabi", "smart care"
   };
   const SERVICE_COST_ALIAS = {
-    // Broad order package  ->  exact sheet service name
-    // "physiotherapy":            "Physiotherapy - Standard",     // <-- pick the sheet row that represents a generic physio
-    // "iv hydration express ksa": "IV Hydration Express",
-    // ... fill for each service seen in orders
+    // Most order package names already match the sheet exactly (Physiotherapy, IV Hydration
+    // Express KSA, Lymphedema Massage, IV Skin Freshness, Flu Shot, Injection Administration,
+    // IV NAD+ 250 mg, IV Hair Growth, etc.) so no alias needed. Add lines only for mismatches.
+    // "iv glutathione - 1200 mg": "IV Glutathione - 1200 mg"
   };
   const normPartner = p => PARTNER_COST_ALIAS[String(p||"").trim().toLowerCase()] || p;
   const normService = s => SERVICE_COST_ALIAS[String(s||"").trim().toLowerCase()] || s;
@@ -1093,7 +1113,11 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
         labCostMap = m; if (viewMode === "revenue") renderRevenue();
       }, (e) => console.warn("labCosts listener:", e && e.code));
       onSnapshot(collection(db, "homecareCosts"), (snap) => {
-        const m = {}; snap.forEach(r => { const x = r.data(); const key = x.serviceName || x.serviceType; if (key) m[_ck(key, x.partner)] = Number(x.charge)||0; });
+        const m = {}; snap.forEach(r => { const x = r.data(); const key = x.serviceName || x.serviceType; if (!key) return;
+          // City-specific rows use a 3-part key; city-less rows use the 2-part key (fallback).
+          if (x.city) m[_ck(key, x.partner) + "|" + String(x.city).trim().toLowerCase()] = Number(x.charge)||0;
+          else m[_ck(key, x.partner)] = Number(x.charge)||0;
+        });
         homecareCostMap = m; if (viewMode === "revenue") renderRevenue();
       }, (e) => console.warn("homecareCosts listener:", e && e.code));
     } catch (e) { console.warn("cost listeners setup:", e); }
@@ -1104,7 +1128,14 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
     const lab = fieldVal(d, FIELD.lab) || "";
     const partner = fieldVal(d, FIELD.homecare) || d.homecare || "";
     const nPartner = normPartner(partner);   // translated to the cost-sheet's partner name
+    const orderCity = String(fieldVal(d, FIELD.city) || "").trim();
     const sub = subcategoryOf(d);
+    // City-aware homecare lookup: try service×partner×city first, then fall back to service×partner.
+    const hcLook = (service) => {
+      const base = _ck(service, nPartner);
+      if (orderCity) { const c = homecareCostMap[base + "|" + orderCity.toLowerCase()]; if (c !== undefined) return c; }
+      return homecareCostMap[base];
+    };
     // Gross = Total Amount (list price from Metabase); fall back to finalPrice if absent.
     const gross = (listPriceOf(d) != null) ? listPriceOf(d) : revenueOf(d);
     const isLabOrder = /lab package/i.test(sub) || /blood|panel|test|biomarker/i.test(pkg);
@@ -1125,13 +1156,13 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
           if (!foundAny) haveLab = false;
         } else haveLab = false;
       }
-      // homecare = Sample Collection cost for this partner
-      const sc = homecareCostMap[_ck("Sample Collection", nPartner)];
+      // homecare = Sample Collection cost for this partner (city-aware)
+      const sc = hcLook("Sample Collection");
       if (sc !== undefined) { hcCharge = sc; hcBasis = "Sample Collection"; } else { haveHc = false; }
     } else {
-      // IV / Injection / Physio / Rehab: NO lab cost. Homecare = the service's own cost by name × partner.
+      // IV / Injection / Physio / Rehab: NO lab cost. Homecare = the service's own cost by name × partner (city-aware).
       haveLab = true; labCost = 0; labParts = [];
-      const svc = homecareCostMap[_ck(normService(pkg), nPartner)];
+      const svc = hcLook(normService(pkg));
       if (svc !== undefined) { hcCharge = svc; hcBasis = normService(pkg); }
       else { haveHc = false; }
     }
@@ -2416,6 +2447,7 @@ function setTabLoading(containerId, on) {
         tile("Margin %", (Math.round(margin*10)/10) + "%", margin>=0?"#10b981":"#ef4444") +
         tile("vs last month", momStr, momPct===null?"":(momPct>=0?"#10b981":"#ef4444")) +
         tile("Missing cost", missing, missing?"#f59e0b":"");
+      { const mb = document.getElementById("rev-missing-btn"); if (mb){ mb.classList.remove("hidden"); mb.textContent = "⚑ Missing costs (" + missing + ")"; mb.style.opacity = missing? "1":"0.5"; } }
       document.getElementById("rev-note").innerHTML = noCosts
         ? `<b style="color:#f59e0b">No cost data loaded yet.</b> Net currently equals gross until the <code>labCosts</code> and <code>homecareCosts</code> collections are populated. Once loaded: Net = Gross (Total Amount) − Lab Cost − Homecare Charge, per Child Order ID.`
         : `Medical P&amp;L per Child Order ID: <b>Net = Gross (Total Amount) − Lab Cost − Homecare Charge</b>. Lab orders: summed biomarker costs (by Lab1) + Sample-Collection charge. IV / Physio / Injection: the service's own homecare cost, no lab cost. Hover ⚑ to see exactly what cost is missing. "vs last month" compares net revenue to the prior month.`;
@@ -2423,6 +2455,7 @@ function setTabLoading(containerId, on) {
       const totBill = sum(rows, r=>r.billable), totCost = sum(rows, r=>r.cost);
       const totRev = sum(rows, r=> r.revenue||0), totMargin = totRev - totCost;
       const exceptions = rows.filter(r=>r.isException).length;
+      { const mb = document.getElementById("rev-missing-btn"); if (mb) mb.classList.add("hidden"); }
       const flagged = rows.filter(r=>r.review).length;
       document.getElementById("rev-summary").innerHTML =
         tile("Visits", rows.length) +
@@ -4317,6 +4350,56 @@ function setTabLoading(containerId, on) {
 
   // Invoicing timesheet: one row per visit for the selected month, with agency cost,
   // client revenue, margin, exceptions, penalties and notes — subtotaled per babysitter.
+  // Missing-cost diagnostic: aggregate exactly which combos are unresolved this month.
+  function showMissingCosts() {
+    const rows = revenueRows().filter(r => r.medical && (r.missingLab || r.missingHc));
+    const body = document.getElementById("missing-body");
+    if (!rows.length) { body.innerHTML = '<div class="p-6 text-center muted2 text-sm">No missing costs this month. Everything resolves. ✅</div>'; document.getElementById("missing-modal").classList.remove("hidden"); return; }
+    // group by the specific missing reason
+    const hc = {}, lab = {}, gross = [];
+    rows.forEach(r => {
+      const partner = r.homecare || "—";
+      if (r.missingHc) {
+        const svc = subcategoryOf(r.d) && /lab package/i.test(subcategoryOf(r.d)) ? "Sample Collection" : (r.pkg || "—");
+        const k = svc + " ||| " + partner;
+        if (!hc[k]) hc[k] = { svc, partner, count:0 };
+        hc[k].count++;
+      }
+      if (r.missingLab) {
+        const k = (r.pkg||"—") + " ||| " + (r.lab||"—");
+        if (!lab[k]) lab[k] = { pkg:r.pkg||"—", lab:r.lab||"—", count:0, parts:(r.missingParts||[]) };
+        lab[k].count++;
+      }
+      if (r.price == null) gross.push(String(fieldVal(r.d, FIELD.orderId)||r.id));
+    });
+    const hcArr = Object.values(hc).sort((a,b)=>b.count-a.count);
+    const labArr = Object.values(lab).sort((a,b)=>b.count-a.count);
+    let html = "";
+    if (hcArr.length) {
+      html += `<div class="mb-4"><div class="font-semibold text-sm mb-2">Missing homecare charge — service × partner (${hcArr.length})</div>
+        <div class="rounded-lg overflow-hidden" style="border:1px solid var(--border)">
+        <div class="flex text-[10px] uppercase muted2 font-semibold px-2 py-1" style="background:var(--surface)"><div style="flex:1">Service</div><div style="width:150px">Partner</div><div style="width:50px;text-align:right">Orders</div></div>
+        ${hcArr.map(x=>`<div class="flex text-sm px-2 py-1.5" style="border-top:1px solid var(--border)"><div style="flex:1">${escapeHtml(x.svc)}</div><div style="width:150px">${escapeHtml(x.partner)}</div><div style="width:50px;text-align:right;font-weight:600">${x.count}</div></div>`).join("")}
+        </div>
+        <p class="text-[11px] muted2 mt-1">Add a "Homecare Charges" row for each (Service Name × Partner × Charge), then re-run the homecare cost-sync.</p></div>`;
+    }
+    if (labArr.length) {
+      html += `<div class="mb-4"><div class="font-semibold text-sm mb-2">Missing lab cost — package/biomarker × lab (${labArr.length})</div>
+        <div class="rounded-lg overflow-hidden" style="border:1px solid var(--border)">
+        <div class="flex text-[10px] uppercase muted2 font-semibold px-2 py-1" style="background:var(--surface)"><div style="flex:1">Package / biomarker</div><div style="width:120px">Lab</div><div style="width:50px;text-align:right">Orders</div></div>
+        ${labArr.map(x=>`<div class="flex text-sm px-2 py-1.5" style="border-top:1px solid var(--border)"><div style="flex:1">${escapeHtml(x.pkg)}${x.parts&&x.parts.length?`<div class="text-[11px]" style="color:#b8860b">unpriced: ${escapeHtml(x.parts.join(", "))}</div>`:""}</div><div style="width:120px">${escapeHtml(x.lab)}</div><div style="width:50px;text-align:right;font-weight:600">${x.count}</div></div>`).join("")}
+        </div>
+        <p class="text-[11px] muted2 mt-1">Add a "Lab Costs" row for each (Package/biomarker × Lab × Cost), or check the Lab1 field is set on the order.</p></div>`;
+    }
+    if (gross.length) {
+      html += `<div class="mb-2"><div class="font-semibold text-sm mb-1">Missing gross (Total Amount) — ${gross.length} order${gross.length>1?"s":""}</div><p class="text-[11px] muted2">These orders have no Total Amount synced: ${gross.slice(0,10).map(escapeHtml).join(", ")}${gross.length>10?" …":""}. Confirm Total Amount is in the Metabase query and synced as <code>totalAmount</code>.</p></div>`;
+    }
+    body.innerHTML = html;
+    document.getElementById("missing-modal").classList.remove("hidden");
+  }
+  { const b=document.getElementById("rev-missing-btn"); if(b) b.addEventListener("click", showMissingCosts); }
+  { const c=document.getElementById("missing-close"); if(c) c.addEventListener("click", ()=>document.getElementById("missing-modal").classList.add("hidden")); }
+
   function exportPnlCSV() {
     const rows = revenueRows();
     if (!rows.length) { alert("No orders in the selected month to export."); return; }
