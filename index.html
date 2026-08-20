@@ -4220,25 +4220,23 @@ function setTabLoading(containerId, on) {
     const icon = document.getElementById("sync-icon");
     const label = document.getElementById("sync-label");
     const stamp = document.getElementById("sync-stamp");
-    // Heavier workflow → give it a full minute. Button stays safely disabled meanwhile.
-    btn.disabled = true; syncCooldownUntil = Date.now() + 60000;
+    // Incremental upsert only (delete + compliance run on schedule). It pulls just the
+    // rows changed in the last few hours, so it's quick. Fire and inform — don't block.
+    btn.disabled = true; syncCooldownUntil = Date.now() + 15000;   // short 15s guard against double-clicks
     icon.style.animation = "bs-spin 1s linear infinite";
-    label.textContent = "Fetching from Meta\u2026";
+    label.textContent = "Syncing\u2026";
     setSyncDot("syncing");
-    if (stamp) { stamp.dataset.prev = stamp.innerHTML; stamp.textContent = "Fetching from Meta\u2026 this can take up to a minute"; }
-    // Fire the n8n webhooks (upsert + delete + compliance). no-cors: we don't read the
-    // response; the live Firestore listener reflects the new data when it lands.
-    const kick = url => fetch(url, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => console.warn("sync webhook:", url, err));
-    kick(SYNC_WEBHOOKS.upsert); kick(SYNC_WEBHOOKS.del); kick(SYNC_WEBHOOKS.compliance);
-    // Keep the spinner + "Fetching" state for the full minute, then reset. If fresh data
-    // arrives sooner, updateSyncStamp (called by the live listener) already updated the pill.
+    if (stamp) { stamp.dataset.prev = stamp.innerHTML; stamp.textContent = "Sync started \u00b7 new orders appear within ~1 min"; }
+    // Fire the upsert webhook only. no-cors: the live Firestore listener reflects new data when it lands.
+    fetch(SYNC_WEBHOOKS.upsert, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => console.warn("sync webhook:", err));
+    // Reset the button quickly — the sync runs server-side; the listener updates the pill when data arrives.
     setTimeout(() => {
       icon.style.animation = "";
       const dot = document.getElementById("sync-dot"); if (dot) dot.classList.remove("syncing","error");
       label.textContent = "Sync now";
       btn.disabled = false;
       updateSyncStamp(0);   // restore the real "Last sync" line + freshness light
-    }, 60000);
+    }, 15000);
   }
 
   // ---------- THEME ----------
