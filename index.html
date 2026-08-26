@@ -314,6 +314,7 @@
       <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
       <button id="view-neworders" class="view-btn" data-view="neworders" data-active="false">New Orders <span id="neworders-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#F6BD22;color:#12151C">0</span></button>
       <button id="view-requests" class="view-btn staff-tab-only" data-view="requests" data-active="false">Requests <span id="requests-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#4C7A63;color:#fff">0</span></button>
+      <button id="view-available" class="view-btn staff-tab-only" data-view="available" data-active="false">Available <span id="available-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#10b981;color:#fff">0</span></button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
       <button id="view-activity" class="view-btn admin-tab-only" data-view="activity" data-active="false">Activity</button>
       <button id="view-analytics" class="view-btn admin-tab-only" data-view="analytics" data-active="false">Analytics</button>
@@ -593,6 +594,21 @@
         <span id="rq-count" class="text-xs muted2"></span>
       </div>
       <div id="rq-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))"></div>
+    </div>
+
+  <div id="available-container" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div id="av-filter" class="flex gap-1">
+          <button data-av="free" class="tkt-filter-btn" data-active="true">Free now</button>
+          <button data-av="busy" class="tkt-filter-btn" data-active="false">Has upcoming</button>
+          <button data-av="all" class="tkt-filter-btn" data-active="false">All active</button>
+        </div>
+        <input id="av-search" type="text" placeholder="Search name, agency, city…" class="icon-input h-9 px-3 rounded-lg border brd text-sm" style="min-width:220px" />
+        <span id="av-count" class="text-xs muted2"></span>
+      </div>
+      <div id="av-summary" class="flex flex-wrap gap-2 mb-4"></div>
+      <div id="av-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))"></div>
+      <div id="av-note" class="text-xs muted2 mt-4"></div>
     </div>
 
   <div id="analytics-container" class="hidden">
@@ -2013,9 +2029,9 @@ function setTabLoading(containerId, on) {
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics" || viewMode === "requests") ? "none" : "flex";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics" || viewMode === "requests" || viewMode === "available") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container","requests-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container","requests-container","available-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
@@ -2032,6 +2048,7 @@ function setTabLoading(containerId, on) {
     if (viewMode === "activity") { show("activity-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Activity log"; renderActivity(); return; }
     if (viewMode === "neworders") { show("neworders-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "New order requests"; renderNewOrders(); return; }
     if (viewMode === "requests") { show("requests-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Customer requests"; renderRequests(); return; }
+    if (viewMode === "available") { show("available-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Available babysitters"; loadAvailable(); return; }
     if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
 
     const scope = scopeNonStatus();
@@ -2218,7 +2235,10 @@ function setTabLoading(containerId, on) {
   // ---------- UTILISATION DASHBOARD (per babysitter, live) ----------
   function renderUtil(visible) {
     const keys = currentDayKeys(); const days = keys.length || 1; const keySet = new Set(keys);
-    const enriched = visible.map(b => { const start = parseSlotDateTime(b.data); if (!start) return null; return { b, start, dur:durationMin(b.data), s:idKey(fieldVal(b.data, FIELD.nurseName) || "") }; }).filter(x => x && keySet.has(dateKey(x.start)));
+    // Accuracy: exclude shifts the babysitter did NOT work (No Show / Absent) from booked hours —
+    // those hours were not actually delivered, so counting them overstates utilisation.
+    const worked = b => { const st = effStatus(b.data); return st !== "No Show" && st !== "Absent"; };
+    const enriched = visible.filter(worked).map(b => { const start = parseSlotDateTime(b.data); if (!start) return null; return { b, start, dur:durationMin(b.data), s:idKey(fieldVal(b.data, FIELD.nurseName) || "") }; }).filter(x => x && keySet.has(dateKey(x.start)));
 
     document.getElementById("subtitle").textContent = "Utilisation · " + (keys[0]||"?") + " → " + (keys[keys.length-1]||"?") + " (" + days + " days)";
     document.getElementById("order-count").textContent = enriched.length + (enriched.length===1?" order":" orders");
@@ -2280,7 +2300,7 @@ function setTabLoading(containerId, on) {
     });
     document.getElementById("util-grid").innerHTML = html;
     document.getElementById("util-grid").style.minWidth = "900px";
-    document.getElementById("util-note").innerHTML = `Utilisation = booked hours ÷ (capacity <b>${CAPACITY_HOURS_PER_DAY}h/day</b> × ${days} days) — a 12-hour day reads 100%. Includes all <b>active</b> babysitters from the roster, so idle (0-booking) staff show too. Period = the From/To dates above; updates live with Firestore.`;
+    document.getElementById("util-note").innerHTML = `Utilisation = booked hours ÷ (capacity <b>${CAPACITY_HOURS_PER_DAY}h/day</b> × ${days} days) — a 12-hour day reads 100%. <b>No-Show and Absent shifts are excluded</b> (those hours weren't worked). Cancelled bookings are already filtered out. Includes all <b>active</b> babysitters, so idle (0-booking) staff show too. Note "Idle" here means 0 bookings <b>in this date window</b> — for who's free to take new work, use the <b>Available</b> tab. Period = the From/To dates above.`;
   }
 
   // ---------- COMPLIANCE VIEW ----------
@@ -2679,6 +2699,112 @@ function setTabLoading(containerId, on) {
     else { document.getElementById("tkt-chat").classList.add("hidden"); document.getElementById("tkt-chat-empty").classList.remove("hidden"); }
   }
   let activitySearch = "";
+
+  // ======================= AVAILABLE BABYSITTERS (staff/sales) =======================
+  // "Free" = an active babysitter with NO bookings from today onward.
+  // We fetch today → +180 days and mark anyone with an upcoming slot as busy.
+  let avData = null;           // { free:[], busy:[] } cached per load
+  let avFilter = "free";
+  let avSearch = "";
+  const AV_FORWARD_DAYS = 180;
+
+  async function loadAvailable() {
+    if (!isStaff) return;
+    const listEl = document.getElementById("av-list");
+    listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Checking upcoming bookings…</div>';
+    const today = dateKey(nowR());
+    const hi = new Date(nowR().getTime() + AV_FORWARD_DAYS*86400000);
+    const hiKey = dateKey(hi);
+    let rows = [];
+    try { rows = await fetchPeriod(today, hiKey); }
+    catch(e){ console.warn("available fetch:", e); listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Could not load bookings.</div>'; return; }
+
+    // Which babysitters have an upcoming booking (from now onward, active statuses only)?
+    const now = nowR();
+    const busyMap = {};   // idKey -> { count, next:Date }
+    rows.forEach(b => {
+      if (!passStatus(b)) return;                       // ignore cancelled/void
+      const dt = parseSlotDateTime(b.data);
+      if (!dt || dt < now) return;                      // only genuinely upcoming
+      const nurse = fieldVal(b.data, FIELD.nurseName) || "";
+      const k = idKey(nurse);
+      if (!k) return;
+      const cur = busyMap[k] || { count:0, next:null };
+      cur.count++; if (!cur.next || dt < cur.next) cur.next = dt;
+      busyMap[k] = cur;
+    });
+
+    // Active roster, respecting the toolbar filters (agency/city).
+    const active = Object.values(bsUniverse).filter(u => u.active
+      && (!hcFilter || u.agency === hcFilter)
+      && (!cityFilter || u.city === cityFilter));
+
+    const free = [], busy = [];
+    active.forEach(u => {
+      const info = busyMap[idKey(u.name)];
+      if (info) busy.push({ ...u, upcoming:info.count, next:info.next });
+      else free.push({ ...u });
+    });
+    free.sort((a,b)=>a.name.localeCompare(b.name));
+    busy.sort((a,b)=>(a.next?.getTime()||0)-(b.next?.getTime()||0));
+    avData = { free, busy };
+    const badge = document.getElementById("available-badge");
+    if (badge){ if(free.length){ badge.textContent=free.length; badge.classList.remove("hidden"); } else badge.classList.add("hidden"); }
+    renderAvailable();
+  }
+
+  function renderAvailable() {
+    if (!avData) return;
+    const { free, busy } = avData;
+    const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
+    document.getElementById("av-summary").innerHTML =
+      tile("Free now", free.length, free.length?"#10b981":"") +
+      tile("Has upcoming", busy.length) +
+      tile("Total active", free.length+busy.length);
+
+    let pool = avFilter==="free" ? free.map(u=>({...u,_free:true}))
+             : avFilter==="busy" ? busy.map(u=>({...u,_free:false}))
+             : [...free.map(u=>({...u,_free:true})), ...busy.map(u=>({...u,_free:false}))];
+    const q = avSearch.trim().toLowerCase();
+    if (q) pool = pool.filter(u => (u.name+" "+(u.agency||"")+" "+(u.city||"")).toLowerCase().includes(q));
+
+    document.getElementById("av-count").textContent = pool.length + (pool.length===1?" babysitter":" babysitters");
+    const wrap = document.getElementById("av-list");
+    if (!pool.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">None match.</div>'; return; }
+
+    wrap.innerHTML = pool.map(u => {
+      const ac = agencyColor(u.agency);
+      const avatar = u.photoUrl
+        ? `<img src="${escapeHtml(u.photoUrl)}" alt="${escapeHtml(u.name)}" class="h-11 w-11 rounded-full object-cover shrink-0" style="border:2px solid ${colorFor(u.name)}" loading="lazy" onerror="this.outerHTML='<span class=\\'h-11 w-11 rounded-full shrink-0 flex items-center justify-center text-sm font-bold text-white\\' style=\\'background:${colorFor(u.name)}\\'>${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>'" />`
+        : `<span class="h-11 w-11 rounded-full shrink-0 flex items-center justify-center text-sm font-bold text-white" style="background:${colorFor(u.name)}">${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>`;
+      const statusPill = u._free
+        ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:${hexA('#10b981',0.16)};color:#10b981">● Free</span>`
+        : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:${hexA('#f59e0b',0.16)};color:#b8860b">Booked</span>`;
+      const detail = u._free
+        ? `<div class="text-xs mt-1" style="color:#10b981">No upcoming bookings — available to offer</div>`
+        : `<div class="text-xs muted2 mt-1">${u.upcoming} upcoming · next ${u.next?escapeHtml(fmtShortDate(u.next)):"—"}</div>`;
+      return `<div class="card rounded-2xl p-3 flex items-center gap-3">
+        ${avatar}
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2"><span class="font-semibold text-sm truncate" style="color:var(--text)">${escapeHtml(u.name)}</span>${statusPill}</div>
+          <div class="text-[11px] muted2 truncate mt-0.5"><span class="font-semibold" style="color:${ac}">${escapeHtml(u.agency||"—")}</span>${u.city?" · "+escapeHtml(u.city):""}</div>
+          ${detail}
+        </div>
+      </div>`;
+    }).join("");
+    document.getElementById("av-note").innerHTML = `Free = active babysitters with <b>no bookings from today onward</b> (checked ${AV_FORWARD_DAYS} days ahead). Cancelled bookings are ignored. Respects the agency/city filters in the toolbar. Updates when you reopen the tab.`;
+  }
+
+  // short date helper for the availability cards
+  function fmtShortDate(d){ try { return d.toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch(e){ return dateKey(d); } }
+
+  document.querySelectorAll("#av-filter .tkt-filter-btn").forEach(b => b.addEventListener("click", () => {
+    avFilter = b.getAttribute("data-av");
+    document.querySelectorAll("#av-filter .tkt-filter-btn").forEach(x=>x.setAttribute("data-active", x===b?"true":"false"));
+    renderAvailable();
+  }));
+  { const as=document.getElementById("av-search"); if(as) as.addEventListener("input", e=>{ avSearch=e.target.value; renderAvailable(); }); }
+  // ==================================================================================
 
   // ======================= CUSTOMER REQUESTS INBOX (staff) =======================
   let custRequests = [];
@@ -3625,7 +3751,9 @@ function setTabLoading(containerId, on) {
         const iqamaBadge = u.iqama ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap" style="background:${hexA(iqColor,0.16)};color:${iqColor}" title="Iqama status">${escapeHtml(u.iqama)}</span>` : "";
         html += `<div class="prof-row flex items-center gap-3 px-4 py-2.5 border-b brd2${u.active?"":" inactive"}" draggable="${dndOn}" data-group="${escapeHtml(gkey)}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}">
           ${dndOn ? grip : ""}
-          <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(u.name)}"></span>
+          ${u.photoUrl
+            ? `<img src="${escapeHtml(u.photoUrl)}" alt="${escapeHtml(u.name)}" class="h-9 w-9 rounded-full object-cover shrink-0" style="border:2px solid ${colorFor(u.name)}" loading="lazy" onerror="this.outerHTML='<span class=\\'h-9 w-9 rounded-full shrink-0 flex items-center justify-center text-xs font-bold text-white\\' style=\\'background:${colorFor(u.name)}\\'>${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>'" />`
+            : `<span class="h-9 w-9 rounded-full shrink-0 flex items-center justify-center text-xs font-bold text-white" style="background:${colorFor(u.name)}">${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>`}
           <div class="min-w-0 flex-1">
             <div class="text-sm font-medium truncate">${escapeHtml(u.name)}</div>
             <div class="text-[11px] muted2 truncate">${u.schedule?escapeHtml(u.schedule):"—"}</div></div>
@@ -4098,7 +4226,8 @@ function setTabLoading(containerId, on) {
    function setView(mode) {
     if (isHomecare && !["day","week","range","tickets","profiles","neworders"].includes(mode)) mode = "day";      // homecare
     if (!isAdmin && ["compliance","revenue","activity","analytics"].includes(mode)) mode = "day";
-    if (!isStaff && mode === "requests") mode = "day";                             // support: no compliance/revenue
+    if (!isStaff && mode === "requests") mode = "day";
+    if (!isStaff && mode === "available") mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
@@ -4115,6 +4244,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("view-neworders").addEventListener("click", () => setView("neworders"));
   document.getElementById("view-analytics").addEventListener("click", () => setView("analytics"));
   document.getElementById("view-requests").addEventListener("click", () => setView("requests"));
+  document.getElementById("view-available").addEventListener("click", () => setView("available"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
