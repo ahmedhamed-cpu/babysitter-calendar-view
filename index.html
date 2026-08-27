@@ -98,6 +98,8 @@
   body.viewer .viewer-only { display:block; }
   body.viewer .admin-only { display:none !important; }         /* admin-exclusive controls */
   body:not(.role-admin) .admin-tab-only { display:none !important; }  /* Compliance + Revenue: admins only */
+  /* New Orders + Tickets: admins and homecare partners only — hidden from support. */
+  body.role-support .support-hidden-tab { display:none !important; }
   body.role-homecare .staff-only { display:none !important; }  /* staff-only areas hidden from homecare */
   body.role-homecare .viewer-only { display:none !important; } /* homecare gets its own minimal UI, not the viewer note */
   body.role-homecare .hc-hide { display:none !important; }     /* homecare: only the Sick Leave status button */
@@ -278,7 +280,7 @@
           <button id="sync-btn" title="Trigger a fresh sync from Metabase now" class="sync-btn group">
             <span id="sync-dot" class="sync-dot"></span>
             <span id="sync-icon" class="sync-icon">↻</span>
-            <span id="sync-label" class="sync-label">Sync now</span>
+            <span id="sync-label" class="sync-label">Refresh</span>
           </button>
           <span id="sync-stamp" class="sync-stamp">Waiting for first sync…</span>
         </div>
@@ -311,8 +313,8 @@
       <button id="view-util" class="view-btn staff-only" data-view="utilisation" data-active="false">Utilisation</button>
        <button id="view-compliance" class="view-btn admin-tab-only" data-view="compliance" data-active="false">Compliance</button>
       <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
-      <button id="view-tickets" class="view-btn" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
-      <button id="view-neworders" class="view-btn" data-view="neworders" data-active="false">New Orders <span id="neworders-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#F6BD22;color:#12151C">0</span></button>
+      <button id="view-tickets" class="view-btn support-hidden-tab" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
+      <button id="view-neworders" class="view-btn support-hidden-tab" data-view="neworders" data-active="false">New Orders <span id="neworders-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#F6BD22;color:#12151C">0</span></button>
       <button id="view-requests" class="view-btn staff-tab-only" data-view="requests" data-active="false">Requests <span id="requests-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#4C7A63;color:#fff">0</span></button>
       <button id="view-available" class="view-btn staff-tab-only" data-view="available" data-active="false">Available <span id="available-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#10b981;color:#fff">0</span></button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
@@ -1904,7 +1906,7 @@ function setTabLoading(containerId, on) {
       if (!e.agency) { const h = fieldVal(b.data, FIELD.homecare); if (h) e.agency = canonAgency(h); }
       if (!e.city) { const c = fieldVal(b.data, FIELD.city); if (c) e.city = String(c); }
     });
-    Object.values(babysitterDocs).forEach(d => { const e = ensure(d.slug, d.name || d.slug); if (d.agency && !e.agency) e.agency = canonAgency(d.agency); if (d.city && !e.city) e.city = d.city; e.active = d.active !== false; if (typeof d.order === "number") e.order = d.order; });
+    Object.values(babysitterDocs).forEach(d => { const e = ensure(d.slug, d.name || d.slug); if (d.agency && !e.agency) e.agency = canonAgency(d.agency); if (d.city && !e.city) e.city = d.city; e.active = d.active !== false; if (typeof d.order === "number") e.order = d.order; if (d.photoUrl) e.photoUrl = d.photoUrl; e.shiftPrefs = d.shiftPrefs||[]; e.experience = d.experience||""; e.cvUrl = d.cvUrl||""; e.availableManual = d.availableManual === true; });
     return map;
   }
   // Different sources spell the agency differently ("Helpful agency"/"Helpful Agency",
@@ -2724,6 +2726,9 @@ function setTabLoading(containerId, on) {
     const busyMap = {};   // idKey -> { count, next:Date }
     rows.forEach(b => {
       if (!passStatus(b)) return;                       // ignore cancelled/void
+      // Babysitting bookings only — medical orders don't make a babysitter "busy".
+      const sub = subcategoryOf(b.data);
+      if (!(sub === "Babysitter" || sub === "Elderly Care")) return;
       const dt = parseSlotDateTime(b.data);
       if (!dt || dt < now) return;                      // only genuinely upcoming
       const nurse = fieldVal(b.data, FIELD.nurseName) || "";
@@ -2734,8 +2739,12 @@ function setTabLoading(containerId, on) {
       busyMap[k] = cur;
     });
 
-    // Active roster, respecting the toolbar filters (agency/city).
-    const active = Object.values(bsUniverse).filter(u => u.active
+    // BABYSITTERS ONLY: restrict to people in the curated `babysitters` roster collection
+    // (medical nurses appear only via bookings, never in this roster). Active profiles only.
+    const rosterSlugs = new Set(Object.keys(babysitterDocs));
+    const active = Object.values(bsUniverse).filter(u =>
+         u.active
+      && rosterSlugs.has(u.slug)                         // babysitter roster members only
       && (!hcFilter || u.agency === hcFilter)
       && (!cityFilter || u.city === cityFilter));
 
@@ -2745,7 +2754,9 @@ function setTabLoading(containerId, on) {
       if (info) busy.push({ ...u, upcoming:info.count, next:info.next });
       else free.push({ ...u });
     });
-    free.sort((a,b)=>a.name.localeCompare(b.name));
+    // Manual availability: admins can force a babysitter onto the "free" list regardless
+    // (availableManual). And a manual override never appears if she actually has upcoming work.
+    free.sort((a,b)=> (b.availableManual?1:0)-(a.availableManual?1:0) || a.name.localeCompare(b.name));
     busy.sort((a,b)=>(a.next?.getTime()||0)-(b.next?.getTime()||0));
     avData = { free, busy };
     const badge = document.getElementById("available-badge");
@@ -2753,6 +2764,7 @@ function setTabLoading(containerId, on) {
     renderAvailable();
   }
 
+  const SHIFT_LABELS = { morning:"🌅 Morning", evening:"🌆 Evening", overnight:"🌙 Overnight" };
   function renderAvailable() {
     if (!avData) return;
     const { free, busy } = avData;
@@ -2760,7 +2772,8 @@ function setTabLoading(containerId, on) {
     document.getElementById("av-summary").innerHTML =
       tile("Free now", free.length, free.length?"#10b981":"") +
       tile("Has upcoming", busy.length) +
-      tile("Total active", free.length+busy.length);
+      tile("Total active", free.length+busy.length) +
+      (isAdmin ? `<button id="av-add-btn" class="kpi" style="cursor:pointer;border:1px dashed var(--gold);color:var(--gold-dark);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px">+ Manage availability</button>` : "");
 
     let pool = avFilter==="free" ? free.map(u=>({...u,_free:true}))
              : avFilter==="busy" ? busy.map(u=>({...u,_free:false}))
@@ -2770,29 +2783,110 @@ function setTabLoading(containerId, on) {
 
     document.getElementById("av-count").textContent = pool.length + (pool.length===1?" babysitter":" babysitters");
     const wrap = document.getElementById("av-list");
-    if (!pool.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">None match.</div>'; return; }
-
-    wrap.innerHTML = pool.map(u => {
+    if (!pool.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">None match.</div>'; }
+    else wrap.innerHTML = pool.map(u => {
       const ac = agencyColor(u.agency);
       const avatar = u.photoUrl
-        ? `<img src="${escapeHtml(u.photoUrl)}" alt="${escapeHtml(u.name)}" class="h-11 w-11 rounded-full object-cover shrink-0" style="border:2px solid ${colorFor(u.name)}" loading="lazy" onerror="this.outerHTML='<span class=\\'h-11 w-11 rounded-full shrink-0 flex items-center justify-center text-sm font-bold text-white\\' style=\\'background:${colorFor(u.name)}\\'>${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>'" />`
-        : `<span class="h-11 w-11 rounded-full shrink-0 flex items-center justify-center text-sm font-bold text-white" style="background:${colorFor(u.name)}">${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>`;
+        ? `<img src="${escapeHtml(u.photoUrl)}" alt="${escapeHtml(u.name)}" class="h-12 w-12 rounded-full object-cover shrink-0" style="border:2px solid ${colorFor(u.name)}" loading="lazy" onerror="this.outerHTML='<span class=\\'h-12 w-12 rounded-full shrink-0 flex items-center justify-center text-sm font-bold text-white\\' style=\\'background:${colorFor(u.name)}\\'>${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>'" />`
+        : `<span class="h-12 w-12 rounded-full shrink-0 flex items-center justify-center text-sm font-bold text-white" style="background:${colorFor(u.name)}">${escapeHtml((u.name||'?').trim().slice(0,1).toUpperCase())}</span>`;
       const statusPill = u._free
         ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:${hexA('#10b981',0.16)};color:#10b981">● Free</span>`
         : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:${hexA('#f59e0b',0.16)};color:#b8860b">Booked</span>`;
+      const manualPill = (u._free && u.availableManual) ? `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full" style="background:${hexA('#3b82f6',0.14)};color:#3b82f6" title="Marked available by admin">admin-listed</span>` : "";
+      const shifts = (u.shiftPrefs||[]).length
+        ? `<div class="flex flex-wrap gap-1 mt-1.5">${u.shiftPrefs.map(s=>`<span class="text-[10px] px-1.5 py-0.5 rounded-full" style="background:var(--surface);color:var(--text-2)">${SHIFT_LABELS[s]||escapeHtml(s)}</span>`).join("")}</div>`
+        : "";
+      const exp = u.experience ? `<div class="text-[11px] muted2 mt-1">Experience: ${escapeHtml(u.experience)}</div>` : "";
+      const cv = u.cvUrl ? `<a href="${escapeHtml(u.cvUrl)}" target="_blank" rel="noopener noreferrer" class="text-[11px] font-semibold mt-1 inline-block" style="color:var(--gold-dark)">📄 View Valeo CV</a>` : "";
       const detail = u._free
-        ? `<div class="text-xs mt-1" style="color:#10b981">No upcoming bookings — available to offer</div>`
+        ? `<div class="text-xs mt-1" style="color:#10b981">Available to offer</div>`
         : `<div class="text-xs muted2 mt-1">${u.upcoming} upcoming · next ${u.next?escapeHtml(fmtShortDate(u.next)):"—"}</div>`;
-      return `<div class="card rounded-2xl p-3 flex items-center gap-3">
-        ${avatar}
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2"><span class="font-semibold text-sm truncate" style="color:var(--text)">${escapeHtml(u.name)}</span>${statusPill}</div>
-          <div class="text-[11px] muted2 truncate mt-0.5"><span class="font-semibold" style="color:${ac}">${escapeHtml(u.agency||"—")}</span>${u.city?" · "+escapeHtml(u.city):""}</div>
-          ${detail}
+      const adminBtns = isAdmin ? `<div class="flex gap-1 mt-2">
+          ${u.availableManual
+            ? `<button class="av-unmark text-[11px] font-semibold px-2 py-1 rounded" data-slug="${u.slug}" style="background:rgba(239,68,68,.1);color:#dc2626">Remove from list</button>`
+            : (u._free ? `<button class="av-mark text-[11px] font-semibold px-2 py-1 rounded" data-slug="${u.slug}" style="background:rgba(16,185,129,.12);color:#10b981">Pin as available</button>` : "")}
+        </div>` : "";
+      return `<div class="card rounded-2xl p-3">
+        <div class="flex items-start gap-3">
+          ${avatar}
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap"><span class="font-semibold text-sm truncate" style="color:var(--text)">${escapeHtml(u.name)}</span>${statusPill}${manualPill}</div>
+            <div class="text-[11px] muted2 truncate mt-0.5"><span class="font-semibold" style="color:${ac}">${escapeHtml(u.agency||"—")}</span>${u.city?" · "+escapeHtml(u.city):""}</div>
+            ${detail}${shifts}${exp}${cv}${adminBtns}
+          </div>
         </div>
       </div>`;
     }).join("");
-    document.getElementById("av-note").innerHTML = `Free = active babysitters with <b>no bookings from today onward</b> (checked ${AV_FORWARD_DAYS} days ahead). Cancelled bookings are ignored. Respects the agency/city filters in the toolbar. Updates when you reopen the tab.`;
+
+    if (isAdmin) {
+      const ab = document.getElementById("av-add-btn"); if (ab) ab.addEventListener("click", openAvailManage);
+      wrap.querySelectorAll(".av-mark").forEach(b => b.addEventListener("click", () => setAvailManual(b.getAttribute("data-slug"), true)));
+      wrap.querySelectorAll(".av-unmark").forEach(b => b.addEventListener("click", () => setAvailManual(b.getAttribute("data-slug"), false)));
+    }
+    document.getElementById("av-note").innerHTML = `<b>Babysitters only</b> (medical nurses excluded), <b>active profiles only</b>. Free = no upcoming babysitting bookings (checked ${AV_FORWARD_DAYS} days ahead; cancelled ignored). Admins can <b>pin</b> a babysitter as available or remove her, and edit shift preferences, experience, and CV link via "Manage availability". Respects the agency/city toolbar filters.`;
+  }
+
+  // Admin: toggle a babysitter's manual "available" flag on her roster doc.
+  async function setAvailManual(slug, on) {
+    if (!isAdmin || !slug) return;
+    try {
+      await setDoc(doc(db, "babysitters", slug), { availableManual: !!on }, { merge: true });
+      logActivity(on ? "Pinned as available" : "Removed from available list", "", slug);
+      // listener will refresh babysitterDocs; re-run the availability check
+      loadAvailable();
+    } catch(e){ console.error("availManual:", e); alert("Could not update (check babysitters write rules)."); }
+  }
+
+  // Admin: manage availability + the extra fields (shift prefs, experience, CV) for a babysitter.
+  function openAvailManage() {
+    if (!isAdmin) return;
+    const roster = Object.values(babysitterDocs).filter(d => d.active !== false).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+    const overlay = document.createElement("div");
+    overlay.className = "modal-backdrop"; overlay.style.display = "flex";
+    overlay.innerHTML = `<div class="modal-card card rounded-2xl p-5 w-full" style="max-width:560px;max-height:85vh;overflow-y:auto">
+      <div class="flex items-center justify-between mb-1"><h3 class="font-bold text-lg">Manage availability</h3><button id="avm-close" class="muted2 text-xl leading-none">&times;</button></div>
+      <p class="text-xs muted2 mb-3">Pick a babysitter to set her shift preferences, experience, CV link, and whether she's pinned as available to offer.</p>
+      <select id="avm-pick" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm mb-3"><option value="">Select a babysitter…</option>${roster.map(d=>`<option value="${escapeHtml(d.slug)}">${escapeHtml(d.name||d.slug)}</option>`).join("")}</select>
+      <div id="avm-form" class="hidden">
+        <label class="flex items-center gap-2 text-sm font-semibold mb-3"><input type="checkbox" id="avm-avail" /> Pinned as available to offer</label>
+        <div class="mb-3"><label class="text-xs muted2 block mb-1">Shift preferences</label>
+          <div class="flex gap-3 text-sm">
+            <label class="flex items-center gap-1"><input type="checkbox" class="avm-shift" value="morning" /> Morning</label>
+            <label class="flex items-center gap-1"><input type="checkbox" class="avm-shift" value="evening" /> Evening</label>
+            <label class="flex items-center gap-1"><input type="checkbox" class="avm-shift" value="overnight" /> Overnight</label>
+          </div></div>
+        <div class="mb-3"><label class="text-xs muted2 block mb-1">Experience</label><input id="avm-exp" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" placeholder="e.g. 5 years, newborn specialist" /></div>
+        <div class="mb-3"><label class="text-xs muted2 block mb-1">Valeo CV link</label><input id="avm-cv" class="icon-input w-full h-9 px-2 rounded-lg border brd text-sm" placeholder="https://… (Drive/PDF)" /></div>
+        <button id="avm-save" class="w-full py-2.5 rounded-lg text-sm font-semibold" style="background:var(--gold);color:#12151C">Save</button>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector("#avm-close").addEventListener("click", close);
+    overlay.addEventListener("click", e => { if(e.target===overlay) close(); });
+    const pick = overlay.querySelector("#avm-pick");
+    pick.addEventListener("change", () => {
+      const slug = pick.value; const form = overlay.querySelector("#avm-form");
+      if (!slug){ form.classList.add("hidden"); return; }
+      const d = babysitterDocs[slug] || {};
+      overlay.querySelector("#avm-avail").checked = d.availableManual === true;
+      overlay.querySelectorAll(".avm-shift").forEach(c => c.checked = (d.shiftPrefs||[]).includes(c.value));
+      overlay.querySelector("#avm-exp").value = d.experience || "";
+      overlay.querySelector("#avm-cv").value = d.cvUrl || "";
+      form.classList.remove("hidden");
+    });
+    overlay.querySelector("#avm-save").addEventListener("click", async () => {
+      const slug = pick.value; if (!slug) return;
+      const shiftPrefs = [...overlay.querySelectorAll(".avm-shift:checked")].map(c=>c.value);
+      const rec = {
+        availableManual: overlay.querySelector("#avm-avail").checked,
+        shiftPrefs,
+        experience: overlay.querySelector("#avm-exp").value.trim(),
+        cvUrl: overlay.querySelector("#avm-cv").value.trim()
+      };
+      try { await setDoc(doc(db, "babysitters", slug), rec, { merge:true }); logActivity("Updated availability profile", "", slug); close(); loadAvailable(); }
+      catch(e){ console.error("avm save:", e); alert("Could not save (check babysitters write rules)."); }
+    });
   }
 
   // short date helper for the availability cards
@@ -4227,7 +4321,9 @@ function setTabLoading(containerId, on) {
     if (isHomecare && !["day","week","range","tickets","profiles","neworders"].includes(mode)) mode = "day";      // homecare
     if (!isAdmin && ["compliance","revenue","activity","analytics"].includes(mode)) mode = "day";
     if (!isStaff && mode === "requests") mode = "day";
-    if (!isStaff && mode === "available") mode = "day";                             // support: no compliance/revenue
+    if (!isStaff && mode === "available") mode = "day";
+    // Tickets + New Orders are for admins and homecare partners only — never support.
+    if (currentRole === "support" && (mode === "tickets" || mode === "neworders")) mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
@@ -4350,23 +4446,24 @@ function setTabLoading(containerId, on) {
     const icon = document.getElementById("sync-icon");
     const label = document.getElementById("sync-label");
     const stamp = document.getElementById("sync-stamp");
-    // Incremental upsert only (delete + compliance run on schedule). It pulls just the
-    // rows changed in the last few hours, so it's quick. Fire and inform — don't block.
-    btn.disabled = true; syncCooldownUntil = Date.now() + 15000;   // short 15s guard against double-clicks
+    // The n8n hourly upsert already writes fresh data into Firestore, and the dashboard's
+    // live listeners reflect it automatically. So this button no longer calls n8n (which was
+    // burning webhook executions). It just refreshes the current view from Firestore — free.
+    btn.disabled = true; syncCooldownUntil = Date.now() + 5000;   // brief guard against double-clicks
     icon.style.animation = "bs-spin 1s linear infinite";
-    label.textContent = "Syncing\u2026";
+    label.textContent = "Refreshing\u2026";
     setSyncDot("syncing");
-    if (stamp) { stamp.dataset.prev = stamp.innerHTML; stamp.textContent = "Sync started \u00b7 new orders appear within ~1 min"; }
-    // Fire the upsert webhook only. no-cors: the live Firestore listener reflects new data when it lands.
-    fetch(SYNC_WEBHOOKS.upsert, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => console.warn("sync webhook:", err));
-    // Reset the button quickly — the sync runs server-side; the listener updates the pill when data arrives.
+    // Drop cached period fetches so Revenue/Util/Compliance/Available re-pull the latest docs.
+    try { periodCache.clear(); } catch(e){}
+    // Re-render whatever tab is open with the freshest Firestore data.
+    try { setView(viewMode); } catch(e){ console.warn("refresh:", e); }
     setTimeout(() => {
       icon.style.animation = "";
       const dot = document.getElementById("sync-dot"); if (dot) dot.classList.remove("syncing","error");
-      label.textContent = "Sync now";
+      label.textContent = "Refresh";
       btn.disabled = false;
-      updateSyncStamp(0);   // restore the real "Last sync" line + freshness light
-    }, 15000);
+      updateSyncStamp(0);
+    }, 1200);
   }
 
   // ---------- THEME ----------
@@ -4799,7 +4896,7 @@ function setTabLoading(containerId, on) {
       : collection(db, "babysitters");
     onSnapshot(rosterSource, (snap) => {
       const m = {};
-      snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false, order: typeof x.order === "number" ? x.order : undefined, engagement: x.engagement||"", engagementManual: x.engagementManual === true }; });
+      snap.forEach(rec => { const x = rec.data(); m[rec.id] = { slug:rec.id, name:x.name||"", agency:x.agency||"", city:x.city||"", active: x.active !== false, order: typeof x.order === "number" ? x.order : undefined, engagement: x.engagement||"", engagementManual: x.engagementManual === true, photoUrl: x.photoUrl||"", shiftPrefs: Array.isArray(x.shiftPrefs)?x.shiftPrefs:[], experience: x.experience||"", cvUrl: x.cvUrl||"", availableManual: x.availableManual === true }; });
       babysitterDocs = m;
       rebuildNameIndex();
       renderGrid();
