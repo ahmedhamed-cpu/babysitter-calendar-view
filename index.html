@@ -280,7 +280,7 @@
           <button id="sync-btn" title="Trigger a fresh sync from Metabase now" class="sync-btn group">
             <span id="sync-dot" class="sync-dot"></span>
             <span id="sync-icon" class="sync-icon">↻</span>
-            <span id="sync-label" class="sync-label">Refresh</span>
+            <span id="sync-label" class="sync-label">Sync now</span>
           </button>
           <span id="sync-stamp" class="sync-stamp">Waiting for first sync…</span>
         </div>
@@ -601,7 +601,7 @@
   <div id="available-container" class="hidden">
       <div class="flex flex-wrap items-center gap-2 mb-3">
         <div id="av-filter" class="flex gap-1">
-          <button data-av="free" class="tkt-filter-btn" data-active="true">Free now</button>
+          <button data-av="free" class="tkt-filter-btn" data-active="true">Available to book</button>
           <button data-av="busy" class="tkt-filter-btn" data-active="false">Has upcoming</button>
           <button data-av="all" class="tkt-filter-btn" data-active="false">All active</button>
         </div>
@@ -2741,10 +2741,12 @@ function setTabLoading(containerId, on) {
 
     // BABYSITTERS ONLY: restrict to people in the curated `babysitters` roster collection
     // (medical nurses appear only via bookings, never in this roster). Active profiles only.
+    // For now, scope to Helpful Agency babysitters (the current babysitter roster).
     const rosterSlugs = new Set(Object.keys(babysitterDocs));
     const active = Object.values(bsUniverse).filter(u =>
          u.active
       && rosterSlugs.has(u.slug)                         // babysitter roster members only
+      && /helpful/i.test(u.agency || "")                 // Helpful Agency babysitters only (for now)
       && (!hcFilter || u.agency === hcFilter)
       && (!cityFilter || u.city === cityFilter));
 
@@ -2754,13 +2756,15 @@ function setTabLoading(containerId, on) {
       if (info) busy.push({ ...u, upcoming:info.count, next:info.next });
       else free.push({ ...u });
     });
-    // Manual availability: admins can force a babysitter onto the "free" list regardless
-    // (availableManual). And a manual override never appears if she actually has upcoming work.
+    // "Available to book" = free AND pinned by an admin (availableManual). This is what
+    // sales/support see. Admins see all free (pinned or not) so they can pin them.
     free.sort((a,b)=> (b.availableManual?1:0)-(a.availableManual?1:0) || a.name.localeCompare(b.name));
     busy.sort((a,b)=>(a.next?.getTime()||0)-(b.next?.getTime()||0));
     avData = { free, busy };
+    // Badge counts what THIS user can see as available-to-book.
+    const bookable = isAdmin ? free : free.filter(u => u.availableManual);
     const badge = document.getElementById("available-badge");
-    if (badge){ if(free.length){ badge.textContent=free.length; badge.classList.remove("hidden"); } else badge.classList.add("hidden"); }
+    if (badge){ if(bookable.length){ badge.textContent=bookable.length; badge.classList.remove("hidden"); } else badge.classList.add("hidden"); }
     renderAvailable();
   }
 
@@ -2769,15 +2773,25 @@ function setTabLoading(containerId, on) {
     if (!avData) return;
     const { free, busy } = avData;
     const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
+    const bookableCount = isAdmin ? free.length : free.filter(u=>u.availableManual).length;
     document.getElementById("av-summary").innerHTML =
-      tile("Free now", free.length, free.length?"#10b981":"") +
+      tile("Available to book", bookableCount, bookableCount?"#10b981":"") +
       tile("Has upcoming", busy.length) +
       tile("Total active", free.length+busy.length) +
       (isAdmin ? `<button id="av-add-btn" class="kpi" style="cursor:pointer;border:1px dashed var(--gold);color:var(--gold-dark);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px">+ Manage availability</button>` : "");
 
-    let pool = avFilter==="free" ? free.map(u=>({...u,_free:true}))
-             : avFilter==="busy" ? busy.map(u=>({...u,_free:false}))
-             : [...free.map(u=>({...u,_free:true})), ...busy.map(u=>({...u,_free:false}))];
+    let basePool;
+    if (avFilter==="free") {
+      // Sales/support see ONLY admin-pinned babysitters. Admins see all free.
+      const freeList = isAdmin ? free : free.filter(u => u.availableManual);
+      basePool = freeList.map(u=>({...u,_free:true}));
+    } else if (avFilter==="busy") {
+      basePool = busy.map(u=>({...u,_free:false}));
+    } else {
+      const freeList = isAdmin ? free : free.filter(u => u.availableManual);
+      basePool = [...freeList.map(u=>({...u,_free:true})), ...busy.map(u=>({...u,_free:false}))];
+    }
+    let pool = basePool;
     const q = avSearch.trim().toLowerCase();
     if (q) pool = pool.filter(u => (u.name+" "+(u.agency||"")+" "+(u.city||"")).toLowerCase().includes(q));
 
@@ -2823,7 +2837,9 @@ function setTabLoading(containerId, on) {
       wrap.querySelectorAll(".av-mark").forEach(b => b.addEventListener("click", () => setAvailManual(b.getAttribute("data-slug"), true)));
       wrap.querySelectorAll(".av-unmark").forEach(b => b.addEventListener("click", () => setAvailManual(b.getAttribute("data-slug"), false)));
     }
-    document.getElementById("av-note").innerHTML = `<b>Babysitters only</b> (medical nurses excluded), <b>active profiles only</b>. Free = no upcoming babysitting bookings (checked ${AV_FORWARD_DAYS} days ahead; cancelled ignored). Admins can <b>pin</b> a babysitter as available or remove her, and edit shift preferences, experience, and CV link via "Manage availability". Respects the agency/city toolbar filters.`;
+    document.getElementById("av-note").innerHTML = isAdmin
+      ? `<b>Admin view.</b> Babysitters only (Helpful Agency, active). "Available to book" shows all free babysitters — <b>pin</b> the ones you want sales to offer. Sales/support only see the ones you pin. Use "Manage availability" to set shift preferences, experience, and CV link. Free = no upcoming babysitting bookings (checked ${AV_FORWARD_DAYS} days ahead; cancelled ignored).`
+      : `<b>Available to book</b> shows babysitters your ops team has marked as available to offer. You can also see who's already booked and all active babysitters. Availability is set by ops/admins.`;
   }
 
   // Admin: toggle a babysitter's manual "available" flag on her roster doc.
@@ -4441,30 +4457,45 @@ function setTabLoading(containerId, on) {
   // button no longer "fires" anything — it re-reads the newest syncRun straight from
   // the live Firestore data and confirms the last-synced time. Always honest, never hangs.
   function triggerSync() {
-    if (Date.now() < syncCooldownUntil) return;
+    if (Date.now() < syncCooldownUntil) {
+      // Within cooldown — just refresh the view from Firestore (free), don't fire n8n.
+      try { periodCache.clear(); setView(viewMode); } catch(e){}
+      const stamp = document.getElementById("sync-stamp");
+      if (stamp) { const mins = Math.ceil((syncCooldownUntil - Date.now())/60000); stamp.textContent = "Refreshed · next full sync available in ~" + mins + " min"; }
+      return;
+    }
     const btn = document.getElementById("sync-btn");
     const icon = document.getElementById("sync-icon");
     const label = document.getElementById("sync-label");
     const stamp = document.getElementById("sync-stamp");
-    // The n8n hourly upsert already writes fresh data into Firestore, and the dashboard's
-    // live listeners reflect it automatically. So this button no longer calls n8n (which was
-    // burning webhook executions). It just refreshes the current view from Firestore — free.
-    btn.disabled = true; syncCooldownUntil = Date.now() + 5000;   // brief guard against double-clicks
+    // Real trigger: fire the n8n upsert webhook. Throttled to once per 15 min GLOBALLY
+    // (via a shared Firestore timestamp) so multiple users can't burn executions.
+    btn.disabled = true; syncCooldownUntil = Date.now() + 15*60000;   // 15-min local guard
     icon.style.animation = "bs-spin 1s linear infinite";
-    label.textContent = "Refreshing\u2026";
+    label.textContent = "Syncing\u2026";
     setSyncDot("syncing");
-    // Drop cached period fetches so Revenue/Util/Compliance/Available re-pull the latest docs.
-    try { periodCache.clear(); } catch(e){}
-    // Re-render whatever tab is open with the freshest Firestore data.
-    try { setView(viewMode); } catch(e){ console.warn("refresh:", e); }
+    if (stamp) stamp.textContent = "Sync started \u00b7 new orders appear within ~1 min";
+    // Record the sync time so other open dashboards also respect the 15-min window.
+    try { setDoc(doc(db, "meta", "lastSync"), { at: Date.now(), by: currentUserEmail||"user" }, { merge:true }); } catch(e){}
+    fetch(SYNC_WEBHOOKS.upsert, { method: "POST", mode: "no-cors", cache: "no-store" }).catch(err => console.warn("sync webhook:", err));
+    // Also refresh the view so cached tabs re-pull once data lands.
+    setTimeout(() => { try { periodCache.clear(); if (viewMode!=="day"&&viewMode!=="span") setView(viewMode); } catch(e){} }, 8000);
     setTimeout(() => {
       icon.style.animation = "";
       const dot = document.getElementById("sync-dot"); if (dot) dot.classList.remove("syncing","error");
-      label.textContent = "Refresh";
+      label.textContent = "Sync now";
       btn.disabled = false;
       updateSyncStamp(0);
-    }, 1200);
+    }, 15000);
   }
+
+  // On load, honor a shared cooldown so a fresh page doesn't immediately allow another sync
+  // right after someone else just triggered one.
+  try {
+    onSnapshot(doc(db, "meta", "lastSync"), (snap) => {
+      const d = snap.data(); if (d && d.at) { const until = d.at + 15*60000; if (until > syncCooldownUntil) syncCooldownUntil = until; }
+    }, ()=>{});
+  } catch(e){}
 
   // ---------- THEME ----------
   function applyTheme(t) { document.body.classList.toggle("dark", t==="dark"); document.getElementById("theme-toggle").textContent = t==="dark"?"☀":"🌙"; try { localStorage.setItem("bs-theme", t); } catch(e){} }
