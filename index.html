@@ -2742,13 +2742,29 @@ function setTabLoading(containerId, on) {
     // BABYSITTERS ONLY: restrict to people in the curated `babysitters` roster collection
     // (medical nurses appear only via bookings, never in this roster). Active profiles only.
     // For now, scope to Helpful Agency babysitters (the current babysitter roster).
-    const rosterSlugs = new Set(Object.keys(babysitterDocs));
-    const active = Object.values(bsUniverse).filter(u =>
-         u.active
-      && rosterSlugs.has(u.slug)                         // babysitter roster members only
-      && /helpful/i.test(u.agency || "")                 // Helpful Agency babysitters only (for now)
-      && (!hcFilter || u.agency === hcFilter)
-      && (!cityFilter || u.city === cityFilter));
+    // Read the ACTIVE roster directly from babysitterDocs (the source of truth for who is an
+    // active Helpful Agency babysitter) — NOT the booking-derived bsUniverse, which would drop
+    // babysitters who have no bookings yet. Merge in any bsUniverse extras (photo/city) if present.
+    const active = Object.values(babysitterDocs)
+      .filter(d => d.active !== false                       // active profiles only (deactivating removes them)
+        && /helpful/i.test(d.agency || "")                  // Helpful Agency babysitters only (for now)
+        && !/nurse|medical/i.test(d.name || ""))            // belt-and-braces: no medical nurses
+      .map(d => {
+        const u = bsUniverse[d.slug] || {};
+        return {
+          slug: d.slug, name: d.name || u.name || d.slug,
+          agency: d.agency || u.agency || "",
+          city: d.city || u.city || "",
+          active: true,
+          photoUrl: d.photoUrl || u.photoUrl || "",
+          shiftPrefs: d.shiftPrefs || [],
+          experience: d.experience || "",
+          cvUrl: d.cvUrl || "",
+          availableManual: d.availableManual === true
+        };
+      })
+      // Honor the toolbar agency/city filters so you can narrow the list.
+      .filter(u => (!hcFilter || u.agency === hcFilter) && (!cityFilter || u.city === cityFilter));
 
     const free = [], busy = [];
     active.forEach(u => {
@@ -4931,6 +4947,7 @@ function setTabLoading(containerId, on) {
       babysitterDocs = m;
       rebuildNameIndex();
       renderGrid();
+      if (viewMode === "available") loadAvailable();   // reflect activate/deactivate + edits live
     }, (err) => { console.warn("babysitters listener:", err && err.code); });
 
      rebuildNameIndex();
