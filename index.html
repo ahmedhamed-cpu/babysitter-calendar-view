@@ -317,6 +317,7 @@
       <button id="view-neworders" class="view-btn support-hidden-tab" data-view="neworders" data-active="false">New Orders <span id="neworders-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#F6BD22;color:#12151C">0</span></button>
       <button id="view-requests" class="view-btn staff-tab-only" data-view="requests" data-active="false">Requests <span id="requests-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#4C7A63;color:#fff">0</span></button>
       <button id="view-available" class="view-btn staff-tab-only" data-view="available" data-active="false">Available <span id="available-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#10b981;color:#fff">0</span></button>
+      <button id="view-incentives" class="view-btn admin-tab-only" data-view="incentives" data-active="false">Incentives</button>
       <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
       <button id="view-activity" class="view-btn admin-tab-only" data-view="activity" data-active="false">Activity</button>
       <button id="view-analytics" class="view-btn admin-tab-only" data-view="analytics" data-active="false">Analytics</button>
@@ -612,6 +613,43 @@
       <div id="av-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))"></div>
       <div id="av-note" class="text-xs muted2 mt-4"></div>
     </div>
+
+  <div id="incentives-container" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span>Month</span><input type="month" id="inc-month" class="icon-input h-9 px-2 rounded-lg border brd text-sm" />
+        <button id="inc-log-btn" class="h-9 px-3 rounded-lg text-sm font-semibold" style="background:var(--gold);color:#12151C">+ Log achievement</button>
+        <button id="inc-export" class="h-9 px-3 rounded-lg text-sm font-semibold" style="background:var(--surface);border:1px solid var(--border)">Export CSV</button>
+        <input id="inc-search" type="text" placeholder="Search babysitter…" class="icon-input h-9 px-3 rounded-lg border brd text-sm" style="min-width:180px" />
+      </div>
+      <div id="inc-summary" class="flex flex-wrap gap-2 mb-4"></div>
+      <div id="inc-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))"></div>
+      <div id="inc-note" class="text-xs muted2 mt-4"></div>
+    </div>
+
+  <!-- Log-achievement modal -->
+  <div id="inc-modal" class="modal-backdrop hidden">
+    <div class="modal-card card rounded-2xl p-5 w-full" style="max-width:480px;max-height:88vh;overflow-y:auto">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="font-bold text-lg">Log an achievement</h3>
+        <button id="inc-close" class="muted2 text-xl leading-none">&times;</button>
+      </div>
+      <p class="text-xs muted2 mb-3">Record a manual achievement. It counts toward the babysitter's month, capped at 500 SAR total.</p>
+      <div class="grid gap-3">
+        <div><label class="text-xs muted2 block mb-1">Babysitter</label>
+          <select id="inc-bs" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm"></select></div>
+        <div><label class="text-xs muted2 block mb-1">Achievement</label>
+          <select id="inc-type" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm"></select></div>
+        <div><label class="text-xs muted2 block mb-1">Amount (SAR)</label>
+          <input id="inc-amt" type="number" min="0" step="5" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" /></div>
+        <div><label class="text-xs muted2 block mb-1">Note / reference (optional)</label>
+          <input id="inc-ref" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" placeholder="Order ID, customer, review link…" /></div>
+        <div><label class="text-xs muted2 block mb-1">Month</label>
+          <input id="inc-mon" type="month" class="icon-input w-full h-10 px-2 rounded-lg border brd text-sm" /></div>
+      </div>
+      <p id="inc-err" class="hidden text-xs mt-2" style="color:#ef4444"></p>
+      <button id="inc-save" class="w-full mt-4 py-2.5 rounded-lg text-sm font-semibold" style="background:var(--gold);color:#12151C">Save achievement</button>
+    </div>
+  </div>
 
   <div id="analytics-container" class="hidden">
       <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -2031,9 +2069,9 @@ function setTabLoading(containerId, on) {
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics" || viewMode === "requests" || viewMode === "available") ? "none" : "flex";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics" || viewMode === "requests" || viewMode === "available" || viewMode === "incentives") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container","requests-container","available-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container","requests-container","available-container","incentives-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
@@ -2051,6 +2089,7 @@ function setTabLoading(containerId, on) {
     if (viewMode === "neworders") { show("neworders-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "New order requests"; renderNewOrders(); return; }
     if (viewMode === "requests") { show("requests-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Customer requests"; renderRequests(); return; }
     if (viewMode === "available") { show("available-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Available babysitters"; loadAvailable(); return; }
+    if (viewMode === "incentives") { show("incentives-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Babysitter incentives"; loadIncentives(); return; }
     if (viewMode === "tickets") { show("tickets-container"); document.getElementById("empty-state").classList.add("hidden"); renderTickets(); return; }
 
     const scope = scopeNonStatus();
@@ -2701,6 +2740,172 @@ function setTabLoading(containerId, on) {
     else { document.getElementById("tkt-chat").classList.add("hidden"); document.getElementById("tkt-chat-empty").classList.remove("hidden"); }
   }
   let activitySearch = "";
+
+  // ======================= BABYSITTER INCENTIVES (admin) =======================
+  const INCENTIVE_CAP = 500;   // max SAR per babysitter per month
+  const INCENTIVE_RULES = {
+    // manual (admin-logged)
+    upsell_monthly:   { label: "Upsold to monthly package", sar: 50, manual: true },
+    upsell_booking:   { label: "Upsold an extra booking",   sar: 30, manual: true },
+    google_review:    { label: "Google review earned",       sar: 40, manual: true },
+    positive_feedback:{ label: "Standout positive feedback", sar: 20, manual: true },
+    // auto (computed)
+    perfect_attend:   { label: "Perfect attendance (month)", sar: 50, manual: false },
+    zero_delays:      { label: "Zero delays (month)",        sar: 30, manual: false },
+    top_hours:        { label: "Top hours (month winner)",   sar: 50, manual: false }
+  };
+  let incMonth = null;      // "YYYY-MM"
+  let incManual = [];       // logged achievements for the month
+  let incSearch = "";
+
+  function monthKeyNow(){ const d = nowR(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+
+  async function loadIncentives() {
+    if (!isAdmin) return;
+    const mEl = document.getElementById("inc-month");
+    if (!mEl.value) mEl.value = monthKeyNow();
+    incMonth = mEl.value;
+    const listEl = document.getElementById("inc-list");
+    listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Calculating incentives…</div>';
+
+    // 1) Manual achievements for the month (Firestore).
+    incManual = [];
+    try {
+      const snap = await getDocs(query(collection(db, "incentives"), where("month", "==", incMonth)));
+      snap.forEach(r => incManual.push({ id:r.id, ...r.data() }));
+    } catch(e){ console.warn("incentives read:", e && e.code); }
+
+    // 2) Auto metrics from that month's bookings.
+    const [y,mo] = incMonth.split("-").map(Number);
+    const lo = new Date(Date.UTC(y, mo-1, 1)), hi = new Date(Date.UTC(y, mo, 0));
+    let rows = [];
+    try { rows = await fetchPeriod(dateKey(lo), dateKey(hi)); } catch(e){ console.warn("inc fetch:", e); }
+
+    // Per-babysitter tallies — babysitting bookings only, active roster.
+    const stat = {};   // slug -> { name, hours, attended, absent, noshow, delayed }
+    const rosterBySlug = babysitterDocs;
+    const ensure = (slug, name) => (stat[slug] = stat[slug] || { slug, name, hours:0, attended:0, absent:0, noshow:0, delayed:0 });
+    rows.forEach(b => {
+      const sub = subcategoryOf(b.data);
+      if (!(sub === "Babysitter" || sub === "Elderly Care")) return;
+      const nm = fieldVal(b.data, FIELD.nurseName) || ""; const slug = idKey(nm);
+      if (!slug || !rosterBySlug[slug]) return;             // babysitters roster only
+      const e = ensure(slug, rosterBySlug[slug].name || nm);
+      const st = effStatus(b.data);
+      if (st === "Attended") { e.attended++; e.hours += durationMin(b.data)/60; }
+      if (st === "Absent") e.absent++;
+      if (st === "No Show") e.noshow++;
+      const delayRaw = fieldVal(b.data, ["Delay In Delivery (Mins)","Delay In Delivery (In Minutes)","Delay in delivery (In minutes)","delay","Delay"]);
+      const delay = Number(delayRaw); if (!isNaN(delay) && delay > 15) e.delayed++;
+    });
+
+    // Top-hours winner (single babysitter with the most attended hours, >0).
+    let topSlug = null, topHrs = 0;
+    Object.values(stat).forEach(e => { if (e.hours > topHrs) { topHrs = e.hours; topSlug = e.slug; } });
+
+    // 3) Build the per-babysitter incentive breakdown.
+    const results = {};   // slug -> { name, items:[{label,sar,auto}], raw, capped }
+    const addItem = (slug, name, label, sar, auto) => {
+      const r = results[slug] = results[slug] || { slug, name, items:[], raw:0 };
+      r.items.push({ label, sar, auto }); r.raw += sar;
+    };
+    // auto items
+    Object.values(stat).forEach(e => {
+      if (e.attended > 0 && e.absent === 0 && e.noshow === 0) addItem(e.slug, e.name, INCENTIVE_RULES.perfect_attend.label, INCENTIVE_RULES.perfect_attend.sar, true);
+      if (e.attended > 0 && e.delayed === 0) addItem(e.slug, e.name, INCENTIVE_RULES.zero_delays.label, INCENTIVE_RULES.zero_delays.sar, true);
+    });
+    if (topSlug) addItem(topSlug, stat[topSlug].name, INCENTIVE_RULES.top_hours.label + " (" + (Math.round(topHrs)) + "h)", INCENTIVE_RULES.top_hours.sar, true);
+    // manual items
+    incManual.forEach(m => {
+      const rule = INCENTIVE_RULES[m.type]; const label = (rule?rule.label:m.type) + (m.ref?` · ${m.ref}`:"");
+      addItem(m.slug, m.name || (rosterBySlug[m.slug]?.name) || m.slug, label, Number(m.sar)||0, false);
+    });
+    // cap each babysitter at 300
+    Object.values(results).forEach(r => { r.capped = Math.min(r.raw, INCENTIVE_CAP); r.overCap = r.raw > INCENTIVE_CAP; });
+
+    incResults = Object.values(results).sort((a,b)=> b.capped - a.capped || (b.raw-a.raw));
+    renderIncentives();
+  }
+  let incResults = [];
+
+  function renderIncentives() {
+    const q = incSearch.trim().toLowerCase();
+    const list = incResults.filter(r => !q || r.name.toLowerCase().includes(q));
+    const totalPayout = list.reduce((s,r)=>s+r.capped, 0);
+    const winners = list.filter(r=>r.capped>0).length;
+    const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
+    document.getElementById("inc-summary").innerHTML =
+      tile("Babysitters earning", winners, winners?"#10b981":"") +
+      tile("Total payout", fmtSAR(totalPayout), "#10b981") +
+      tile("Avg per earner", winners?fmtSAR(Math.round(totalPayout/winners)):"—") +
+      tile("Cap / person", fmtSAR(INCENTIVE_CAP));
+
+    const wrap = document.getElementById("inc-list");
+    if (!list.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">No incentives for this month yet. Log achievements or wait for booking data.</div>'; }
+    else wrap.innerHTML = list.map((r,i) => {
+      const rank = i===0 ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : `#${i+1}`;
+      const items = r.items.map(it => `<div class="flex justify-between text-xs py-0.5"><span class="${it.auto?'':'font-medium'}">${it.auto?'⚙️ ':'✎ '}${escapeHtml(it.label)}</span><span class="font-semibold">${it.sar} SAR</span></div>`).join("");
+      return `<div class="card rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2"><span class="text-lg">${rank}</span><span class="font-bold text-sm">${escapeHtml(r.name)}</span></div>
+          <div class="text-right"><div class="font-bold text-lg" style="color:#10b981">${fmtSAR(r.capped)}</div>${r.overCap?`<div class="text-[10px]" style="color:#b8860b">capped from ${fmtSAR(r.raw)}</div>`:""}</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:6px">${items}</div>
+      </div>`;
+    }).join("");
+    document.getElementById("inc-note").innerHTML = `Fixed SAR per achievement, <b>capped at ${INCENTIVE_CAP} SAR per babysitter per month</b>. ⚙️ = auto (from bookings: attendance, delays, hours). ✎ = admin-logged (upsells, reviews, feedback). Auto metrics cover babysitting/elderly bookings for active roster babysitters. Delays counted when over 15 min.`;
+  }
+
+  function openIncLog() {
+    if (!isAdmin) return;
+    const roster = Object.values(babysitterDocs).filter(d => d.active !== false).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+    const bs = document.getElementById("inc-bs");
+    bs.innerHTML = '<option value="">Select…</option>' + roster.map(d=>`<option value="${escapeHtml(d.slug)}">${escapeHtml(d.name||d.slug)}</option>`).join("");
+    const typeSel = document.getElementById("inc-type");
+    typeSel.innerHTML = Object.entries(INCENTIVE_RULES).filter(([k,v])=>v.manual).map(([k,v])=>`<option value="${k}" data-sar="${v.sar}">${escapeHtml(v.label)} (${v.sar} SAR)</option>`).join("");
+    const amt = document.getElementById("inc-amt");
+    const setAmt = () => { const o = typeSel.selectedOptions[0]; if (o) amt.value = o.getAttribute("data-sar"); };
+    typeSel.onchange = setAmt; setAmt();
+    document.getElementById("inc-mon").value = incMonth || monthKeyNow();
+    document.getElementById("inc-ref").value = "";
+    document.getElementById("inc-err").classList.add("hidden");
+    document.getElementById("inc-modal").classList.remove("hidden");
+  }
+
+  async function saveIncLog() {
+    if (!isAdmin) return;
+    const g = id => document.getElementById(id);
+    const slug = g("inc-bs").value, type = g("inc-type").value, sar = Number(g("inc-amt").value)||0, ref = g("inc-ref").value.trim(), month = g("inc-mon").value;
+    const err = g("inc-err");
+    if (!slug){ err.textContent = "Pick a babysitter."; err.classList.remove("hidden"); return; }
+    if (!month){ err.textContent = "Pick a month."; err.classList.remove("hidden"); return; }
+    const name = babysitterDocs[slug]?.name || slug;
+    const id = "inc_" + month + "_" + slug + "_" + Date.now().toString(36);
+    try {
+      await setDoc(doc(db, "incentives", id), { slug, name, type, sar, ref, month, by: currentUserEmail||"admin", at: new Date().toISOString() });
+      logActivity("Logged incentive", "", name + " · " + type + " · " + sar + " SAR");
+      g("inc-modal").classList.add("hidden");
+      if (g("inc-month").value === month) loadIncentives();
+    } catch(e){ console.error("inc save:", e); err.textContent = "Could not save (check incentives write rules)."; err.classList.remove("hidden"); }
+  }
+
+  function exportIncentives() {
+    if (!incResults.length) return;
+    const lines = [["Babysitter","Achievements","Raw SAR","Payout (capped)","Month"]];
+    incResults.forEach(r => lines.push([r.name, r.items.map(i=>i.label+" ("+i.sar+")").join("; "), r.raw, r.capped, incMonth]));
+    const esc = v => { v=String(v??""); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+    const csv = lines.map(r=>r.map(esc).join(",")).join("\n");
+    const blob = new Blob([csv], {type:"text/csv"}); const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href=url; a.download="valeo-incentives-"+incMonth+".csv"; a.click(); URL.revokeObjectURL(url);
+  }
+
+  { const b=document.getElementById("inc-month"); if(b) b.addEventListener("change", loadIncentives); }
+  { const b=document.getElementById("inc-log-btn"); if(b) b.addEventListener("click", openIncLog); }
+  { const b=document.getElementById("inc-close"); if(b) b.addEventListener("click", ()=>document.getElementById("inc-modal").classList.add("hidden")); }
+  { const b=document.getElementById("inc-save"); if(b) b.addEventListener("click", saveIncLog); }
+  { const b=document.getElementById("inc-export"); if(b) b.addEventListener("click", exportIncentives); }
+  { const b=document.getElementById("inc-search"); if(b) b.addEventListener("input", e=>{ incSearch=e.target.value; renderIncentives(); }); }
+  // ==============================================================================
 
   // ======================= AVAILABLE BABYSITTERS (staff/sales) =======================
   // "Free" = an active babysitter with NO bookings from today onward.
@@ -4354,6 +4559,7 @@ function setTabLoading(containerId, on) {
     if (!isAdmin && ["compliance","revenue","activity","analytics"].includes(mode)) mode = "day";
     if (!isStaff && mode === "requests") mode = "day";
     if (!isStaff && mode === "available") mode = "day";
+    if (!isAdmin && mode === "incentives") mode = "day";
     // Tickets + New Orders are for admins and homecare partners only — never support.
     if (currentRole === "support" && (mode === "tickets" || mode === "neworders")) mode = "day";                             // support: no compliance/revenue
     viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
@@ -4373,6 +4579,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("view-analytics").addEventListener("click", () => setView("analytics"));
   document.getElementById("view-requests").addEventListener("click", () => setView("requests"));
   document.getElementById("view-available").addEventListener("click", () => setView("available"));
+  document.getElementById("view-incentives").addEventListener("click", () => setView("incentives"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
   document.getElementById("pkg-filter").addEventListener("change", e => { pkgFilter = e.target.value; renderGrid(); });
