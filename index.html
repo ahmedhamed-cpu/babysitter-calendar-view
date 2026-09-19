@@ -292,6 +292,7 @@
         <button id="theme-toggle" title="Toggle dark / light" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center text-base">🌙</button>
         <button id="whoami-btn" title="Show my role & claims" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center text-base">&#128100;</button>
         <button id="new-ticket-btn" title="Raise a general ticket" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium">&#43; Ticket</button>
+        <button id="activity-btn" title="View activity log" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium admin-only">Activity</button>
         <button id="signout-btn" title="Sign out" class="nav-btn h-9 px-3 rounded-lg border brd text-sm font-medium hidden">Sign out</button>
       </div>
     </div>
@@ -318,8 +319,7 @@
       <button id="view-requests" class="view-btn staff-tab-only" data-view="requests" data-active="false">Requests <span id="requests-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#4C7A63;color:#fff">0</span></button>
       <button id="view-available" class="view-btn staff-tab-only" data-view="available" data-active="false">Available <span id="available-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#10b981;color:#fff">0</span></button>
       <button id="view-incentives" class="view-btn admin-tab-only" data-view="incentives" data-active="false">Incentives</button>
-      <button id="view-profiles" class="view-btn" data-view="profiles" data-active="false">Profiles</button>
-      <button id="view-activity" class="view-btn admin-tab-only" data-view="activity" data-active="false">Activity</button>
+      <button id="view-profiles" class="view-btn admin-tab-only" data-view="profiles" data-active="false">Profiles</button>
       <button id="view-analytics" class="view-btn admin-tab-only" data-view="analytics" data-active="false">Analytics</button>
     </div>
     <div id="range-inputs" class="hidden items-center gap-2 text-sm muted">
@@ -939,7 +939,7 @@
   // Ticketing: dashboard POSTs the ticket here; n8n posts it to Slack (keeps the
   // Slack webhook server-side, out of this page's source).
   const TICKET_WEBHOOK = "https://feelvaleo.app.n8n.cloud/webhook/babysitter-ticket";
-  const ADMIN_NOTIFY_EMAILS = ["ahmed.hamed@feelvaleo.com","karthik.ramachandran@feelvaleo.com","nilesh.pandya@feelvaleo.com"]; // emailed by n8n on every new ticket
+  const ADMIN_NOTIFY_EMAILS = ["ahmed.hamed@feelvaleo.com","ahmed.elsawy@feelvaleo.com"]; // emailed by n8n on every new ticket (Karthik only via n8n for his general tickets)
   // Scenarios homecare partners / ops can raise. Edit freely.
   const TICKET_CATEGORIES = [
     "Client not answering / no access",
@@ -983,13 +983,13 @@
     clientLocation: ["Client Location","Customer Location","Client Map","Client Location URL","Customer Map","Map URL","Location URL","Address Map","Map Link","Client Map URL"]
   };
   
-  // route → who n8n tags in Slack. management=@Karthik, ops=@Ahmed+@Nilesh, tech=@channel
+  // route → who n8n tags in Slack. management=@Karthik, ops=@Ahmed, tech=@channel
 const GENERAL_TICKET_TYPES = [
   { label: "Invoice payment / discrepancy",        route: "management", tag: "Karthik" },
   { label: "Extreme escalation",                   route: "management", tag: "Karthik" },
   { label: "New service proposal",                 route: "management", tag: "Karthik" },
-  { label: "Uniform requested",                    route: "ops",        tag: "Ahmed & Nilesh" },
-  { label: "General ops request",                  route: "ops",        tag: "Ahmed & Nilesh" },
+  { label: "Uniform requested",                    route: "ops",        tag: "Ahmed" },
+  { label: "General ops request",                  route: "ops",        tag: "Ahmed" },
   { label: "Dashboard technical issue (critical)", route: "tech",       tag: "#channel (critical)" },
   { label: "\u2192 Partner: Availability check",        route: "homecare",   tag: "Partner", toPartner: true },
   { label: "\u2192 Partner: Availability for new order", route: "homecare",   tag: "Partner", toPartner: true },
@@ -1001,7 +1001,7 @@ const GENERAL_TICKET_TYPES = [
 ];
 const ROUTE_HINT = {
   management: "Goes to Karthik (senior management).",
-  ops: "Goes to Ahmed & Nilesh (ops).",
+  ops: "Goes to Ahmed (ops).",
   tech: "Critical — alerts the whole ops channel.",
   homecare: "Sent to the selected partner — they'll be emailed."
 };
@@ -1086,7 +1086,7 @@ document.getElementById("gticket-submit").addEventListener("click", async () => 
       toPartner ? (pickedAgency + " has been notified by email.") :
       type.route === "management" ? "Karthik has been tagged on Slack." :
       type.route === "tech" ? "The ops channel has been alerted." :
-      "Ahmed & Nilesh have been tagged on Slack.";
+      "Ahmed has been tagged on Slack.";
     document.getElementById("gticket-success").classList.remove("hidden");
     setTimeout(closeGeneralTicket, 1600);
   } catch (e) {
@@ -3069,8 +3069,9 @@ function setTabLoading(containerId, on) {
     try {
       await setDoc(doc(db, "babysitters", slug), { availableManual: !!on }, { merge: true });
       logActivity(on ? "Pinned as available" : "Removed from available list", "", slug);
-      // listener will refresh babysitterDocs; re-run the availability check
-      loadAvailable();
+      // The babysitters listener refreshes babysitterDocs and re-renders the grid + Available tab.
+      if (viewMode === "available") loadAvailable();
+      else if (viewMode === "profiles") renderProfiles();
     } catch(e){ console.error("availManual:", e); alert("Could not update (check babysitters write rules)."); }
   }
 
@@ -4090,6 +4091,7 @@ function setTabLoading(containerId, on) {
             <div class="text-[11px] muted2 truncate">${u.schedule?escapeHtml(u.schedule):"—"}</div></div>
           <div class="flex items-center gap-1.5 shrink-0">${currentBadge}${iqamaBadge}</div>
           <span class="text-xs font-medium shrink-0 ${u.active?"text-emerald-600":"muted2"}">${u.active?"Active":"Inactive"}</span>
+          ${isAdmin ? `<button class="avpin-btn shrink-0 text-[11px] font-semibold px-2 py-1 rounded-lg" style="background:${u.availableManual?'rgba(16,185,129,.15)':'var(--surface)'};color:${u.availableManual?'#10b981':'var(--text-2)'};border:1px solid ${u.availableManual?'rgba(16,185,129,.4)':'var(--border)'}" data-slug="${u.slug}" data-on="${u.availableManual?'1':'0'}" title="Pin as available for sales to offer">${u.availableManual?'✓ Available':'Pin available'}</button>` : ""}
           ${canPublish ? `<button class="pub-btn shrink-0 text-[11px] font-semibold px-2 py-1 rounded-lg" style="background:var(--gold-soft);color:var(--gold-dark);border:1px solid var(--gold-soft-bd)" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" title="Publish to public gallery">Share ↗</button>` : ""}
           ${(isAdmin || isHomecare) ? `<div class="switch" draggable="false" data-on="${u.active}" data-slug="${u.slug}" data-name="${escapeHtml(u.name)}" data-agency="${escapeHtml(u.agency||"")}" data-city="${escapeHtml(u.city||"")}" role="switch" aria-checked="${u.active}" title="Toggle active"><span class="knob"></span></div>` : ""}
         </div>`;
@@ -4102,6 +4104,12 @@ function setTabLoading(containerId, on) {
       : (isHomecare
         ? `Toggle your babysitters on/off — turning one off hides her and her bookings from the calendar. Reordering is admin-only.`
         : `View-only access — you can see every babysitter's profile, but editing, reordering, and on/off toggles are limited to admins.`);
+
+    document.querySelectorAll("#profiles-list .avpin-btn").forEach(b => b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const slug = b.getAttribute("data-slug"); const on = b.getAttribute("data-on") !== "1";
+      await setAvailManual(slug, on);
+    }));
 
     document.querySelectorAll("#profiles-list .pub-btn").forEach(b => b.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -4556,7 +4564,7 @@ function setTabLoading(containerId, on) {
 
    function setView(mode) {
     if (isHomecare && !["day","week","range","tickets","profiles","neworders"].includes(mode)) mode = "day";      // homecare
-    if (!isAdmin && ["compliance","revenue","activity","analytics"].includes(mode)) mode = "day";
+    if (!isAdmin && ["compliance","revenue","activity","analytics","profiles","incentives"].includes(mode)) mode = "day";
     if (!isStaff && mode === "requests") mode = "day";
     if (!isStaff && mode === "available") mode = "day";
     if (!isAdmin && mode === "incentives") mode = "day";
@@ -4574,7 +4582,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("rev-month").addEventListener("change", () => { if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("rev-rate").addEventListener("change", (e) => { setAgencyRate(parseFloat(e.target.value)); if (viewMode === "revenue") renderRevenue(); });
   document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
-  document.getElementById("view-activity").addEventListener("click", () => setView("activity"));
+  { const ab = document.getElementById("activity-btn"); if (ab) ab.addEventListener("click", () => setView("activity")); }
   document.getElementById("view-neworders").addEventListener("click", () => setView("neworders"));
   document.getElementById("view-analytics").addEventListener("click", () => setView("analytics"));
   document.getElementById("view-requests").addEventListener("click", () => setView("requests"));
@@ -5166,7 +5174,7 @@ function setTabLoading(containerId, on) {
   // Admins can mark attendance/status and edit profiles. Everyone else is view-only
   // (can browse all views and export, but cannot write). Enforced for real by the
   // Firestore security rules; this just shapes the UI.
-  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "karthik.ramachandran@feelvaleo.com", "ritwik.gupta@feelvaleo.com", "abhishek.jain@feelvaleo.com"]; // Nilesh is staff/support, not admin
+  const ADMIN_EMAILS = ["ahmed.hamed@feelvaleo.com", "ahmed.elsawy@feelvaleo.com", "karthik.ramachandran@feelvaleo.com", "ritwik.gupta@feelvaleo.com", "abhishek.jain@feelvaleo.com"];
   // Homecare partner logins → the agency whose bookings they may see.
   const HOMECARE_AGENCY = { "giovannivillar0522@gmail.com": "Helpful Agency" };
   function roleOf(email) {
