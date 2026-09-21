@@ -100,6 +100,8 @@
   body:not(.role-admin) .admin-tab-only { display:none !important; }  /* Compliance + Revenue: admins only */
   /* New Orders + Tickets: admins and homecare partners only — hidden from support. */
   body.role-support .support-hidden-tab { display:none !important; }
+  /* Requests + Available: admin and support only — hidden from homecare partners. */
+  body.role-homecare .staff-tab-only { display:none !important; }
   body.role-homecare .staff-only { display:none !important; }  /* staff-only areas hidden from homecare */
   body.role-homecare .viewer-only { display:none !important; } /* homecare gets its own minimal UI, not the viewer note */
   body.role-homecare .hc-hide { display:none !important; }     /* homecare: only the Sick Leave status button */
