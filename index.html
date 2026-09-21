@@ -603,8 +603,7 @@
       <div class="flex flex-wrap items-center gap-2 mb-3">
         <div id="av-filter" class="flex gap-1">
           <button data-av="free" class="tkt-filter-btn" data-active="true">Available to book</button>
-          <button data-av="busy" class="tkt-filter-btn" data-active="false">Has upcoming</button>
-          <button data-av="all" class="tkt-filter-btn" data-active="false">All active</button>
+          <button data-av="busy" class="tkt-filter-btn" data-active="false">Booked</button>
         </div>
         <input id="av-search" type="text" placeholder="Search name, agency, city…" class="icon-input h-9 px-3 rounded-lg border brd text-sm" style="min-width:220px" />
         <span id="av-count" class="text-xs muted2"></span>
@@ -2928,7 +2927,8 @@ function setTabLoading(containerId, on) {
 
     // Which babysitters have an upcoming booking (from now onward, active statuses only)?
     const now = nowR();
-    const busyMap = {};   // idKey -> { count, next:Date }
+    const busyMap = {};   // idKey -> { count, next:Date, last:Date, tier:string }
+    const TIER_RANK = { Monthly:3, Weekly:2, Daily:1 };
     rows.forEach(b => {
       if (!passStatus(b)) return;                       // ignore cancelled/void
       // Babysitting bookings only — medical orders don't make a babysitter "busy".
@@ -2939,8 +2939,13 @@ function setTabLoading(containerId, on) {
       const nurse = fieldVal(b.data, FIELD.nurseName) || "";
       const k = idKey(nurse);
       if (!k) return;
-      const cur = busyMap[k] || { count:0, next:null };
-      cur.count++; if (!cur.next || dt < cur.next) cur.next = dt;
+      const tier = fieldVal(b.data, ["Booking Duration Tier","bookingTier","Booking Tier"]) || "Daily";
+      const cur = busyMap[k] || { count:0, next:null, last:null, tier:"Daily" };
+      cur.count++;
+      if (!cur.next || dt < cur.next) cur.next = dt;     // earliest upcoming
+      if (!cur.last || dt > cur.last) cur.last = dt;     // latest upcoming (end date)
+      // keep the "highest" tier she has (Monthly > Weekly > Daily)
+      if ((TIER_RANK[tier]||1) > (TIER_RANK[cur.tier]||1)) cur.tier = tier;
       busyMap[k] = cur;
     });
 
@@ -2974,7 +2979,7 @@ function setTabLoading(containerId, on) {
     const free = [], busy = [];
     active.forEach(u => {
       const info = busyMap[idKey(u.name)];
-      if (info) busy.push({ ...u, upcoming:info.count, next:info.next });
+      if (info) busy.push({ ...u, upcoming:info.count, next:info.next, last:info.last, tier:info.tier });
       else free.push({ ...u });
     });
     // "Available to book" = free AND pinned by an admin (availableManual). This is what
@@ -2983,7 +2988,7 @@ function setTabLoading(containerId, on) {
     busy.sort((a,b)=>(a.next?.getTime()||0)-(b.next?.getTime()||0));
     avData = { free, busy };
     // Badge counts what THIS user can see as available-to-book.
-    const bookable = isAdmin ? free : free.filter(u => u.availableManual);
+    const bookable = free.filter(u => u.availableManual);
     const badge = document.getElementById("available-badge");
     if (badge){ if(bookable.length){ badge.textContent=bookable.length; badge.classList.remove("hidden"); } else badge.classList.add("hidden"); }
     renderAvailable();
@@ -2994,23 +2999,17 @@ function setTabLoading(containerId, on) {
     if (!avData) return;
     const { free, busy } = avData;
     const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
-    const bookableCount = isAdmin ? free.length : free.filter(u=>u.availableManual).length;
+    const bookableCount = free.filter(u=>u.availableManual).length;
     document.getElementById("av-summary").innerHTML =
       tile("Available to book", bookableCount, bookableCount?"#10b981":"") +
-      tile("Has upcoming", busy.length) +
-      tile("Total active", free.length+busy.length) +
-      (isAdmin ? `<button id="av-add-btn" class="kpi" style="cursor:pointer;border:1px dashed var(--gold);color:var(--gold-dark);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px">+ Manage availability</button>` : "");
+      tile("Booked", busy.length);
 
     let basePool;
     if (avFilter==="free") {
-      // Sales/support see ONLY admin-pinned babysitters. Admins see all free.
-      const freeList = isAdmin ? free : free.filter(u => u.availableManual);
-      basePool = freeList.map(u=>({...u,_free:true}));
-    } else if (avFilter==="busy") {
-      basePool = busy.map(u=>({...u,_free:false}));
+      // "Available to book" = ONLY babysitters an admin pinned (from the Profiles tab). Same for everyone.
+      basePool = free.filter(u => u.availableManual).map(u=>({...u,_free:true}));
     } else {
-      const freeList = isAdmin ? free : free.filter(u => u.availableManual);
-      basePool = [...freeList.map(u=>({...u,_free:true})), ...busy.map(u=>({...u,_free:false}))];
+      basePool = busy.map(u=>({...u,_free:false}));
     }
     let pool = basePool;
     const q = avSearch.trim().toLowerCase();
@@ -3035,7 +3034,16 @@ function setTabLoading(containerId, on) {
       const cv = u.cvUrl ? `<a href="${escapeHtml(u.cvUrl)}" target="_blank" rel="noopener noreferrer" class="text-[11px] font-semibold mt-1 inline-block" style="color:var(--gold-dark)">📄 View Valeo CV</a>` : "";
       const detail = u._free
         ? `<div class="text-xs mt-1" style="color:#10b981">Available to offer</div>`
-        : `<div class="text-xs muted2 mt-1">${u.upcoming} upcoming · next ${u.next?escapeHtml(fmtShortDate(u.next)):"—"}</div>`;
+        : (() => {
+            const tier = u.tier || "Daily";
+            const tierColor = tier==="Monthly" ? "#8b5cf6" : tier==="Weekly" ? "#3b82f6" : "#f59e0b";
+            const tierPill = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(tierColor,0.15)};color:${tierColor}">${escapeHtml(tier)}</span>`;
+            // For monthly/weekly, show the last date she'll still be booked; for daily, show the date.
+            const endLine = (tier==="Monthly" || tier==="Weekly")
+              ? `<div class="text-xs muted2 mt-1">Booked until <b>${u.last?escapeHtml(fmtShortDate(u.last)):"—"}</b></div>`
+              : `<div class="text-xs muted2 mt-1">Next booking ${u.next?escapeHtml(fmtShortDate(u.next)):"—"}</div>`;
+            return `<div class="mt-1">${tierPill}</div>${endLine}`;
+          })();
       const adminBtns = isAdmin ? `<div class="flex gap-1 mt-2">
           ${u.availableManual
             ? `<button class="av-unmark text-[11px] font-semibold px-2 py-1 rounded" data-slug="${u.slug}" style="background:rgba(239,68,68,.1);color:#dc2626">Remove from list</button>`
@@ -3059,8 +3067,8 @@ function setTabLoading(containerId, on) {
       wrap.querySelectorAll(".av-unmark").forEach(b => b.addEventListener("click", () => setAvailManual(b.getAttribute("data-slug"), false)));
     }
     document.getElementById("av-note").innerHTML = isAdmin
-      ? `<b>Admin view.</b> Babysitters only (Helpful Agency, active). "Available to book" shows all free babysitters — <b>pin</b> the ones you want sales to offer. Sales/support only see the ones you pin. Use "Manage availability" to set shift preferences, experience, and CV link. Free = no upcoming babysitting bookings (checked ${AV_FORWARD_DAYS} days ahead; cancelled ignored).`
-      : `<b>Available to book</b> shows babysitters your ops team has marked as available to offer. You can also see who's already booked and all active babysitters. Availability is set by ops/admins.`;
+      ? `<b>Available to book</b> shows only babysitters you've <b>pinned as available</b> from the Profiles tab — pin/unpin there to keep this list fresh. <b>Booked</b> shows babysitters with upcoming bookings, tagged Monthly / Weekly / Daily; monthly and weekly show the last date they're booked until.`
+      : `<b>Available to book</b> shows babysitters the ops team has marked as available to offer. <b>Booked</b> shows who's already booked, with their booking type and end date.`;
   }
 
   // Admin: toggle a babysitter's manual "available" flag on her roster doc.
