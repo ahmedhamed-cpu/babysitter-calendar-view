@@ -244,6 +244,44 @@
   @supports (padding: env(safe-area-inset-top)) {
     header { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
   }
+
+  /* ===== MOBILE EXPERIENCE (phones up to 768px) ===== */
+  @media (max-width: 768px) {
+    #m-hamburger { display:flex !important; }
+    .desktop-tabs { display:none !important; }               /* hide the desktop tab strip */
+    /* Slide-in drawer */
+    #m-drawer-backdrop:not(.hidden) { display:block; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:70; }
+    #m-drawer { display:flex !important; flex-direction:column; position:fixed; top:0; bottom:0; left:0; width:82%; max-width:320px; z-index:71;
+      background:var(--card); box-shadow:2px 0 24px rgba(0,0,0,.3); transform:translateX(-100%); transition:transform .25s ease;
+      padding-top:env(safe-area-inset-top,0px); overflow-y:auto; }
+    #m-drawer:not(.hidden) { transform:translateX(0); }
+    #m-drawer.hidden { display:flex !important; transform:translateX(-100%); pointer-events:none; }
+    .m-drawer-head { display:flex; align-items:center; justify-content:space-between; padding:16px; border-bottom:1px solid var(--border); }
+    .m-drawer-title { font-weight:700; font-size:16px; }
+    #m-drawer-close { background:none; border:none; font-size:26px; line-height:1; color:var(--muted); cursor:pointer; width:40px; height:40px; }
+    #m-drawer-links { flex:1; padding:8px; }
+    .m-drawer-foot { padding:8px; border-top:1px solid var(--border); }
+    .m-drawer-link { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:13px 14px; border:none; background:none;
+      font-size:15px; font-weight:500; color:var(--text); border-radius:10px; cursor:pointer; }
+    .m-drawer-link[data-active="true"] { background:var(--gold-soft); color:var(--gold-dark); font-weight:700; }
+    .m-drawer-link .m-badge { margin-left:auto; font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; background:#ef4444; color:#fff; }
+    .m-drawer-section { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); padding:12px 14px 4px; font-weight:700; }
+    /* Bottom nav — quick thumb access to core views */
+    #m-bottomnav { display:flex !important; position:fixed; left:0; right:0; bottom:0; z-index:60; background:var(--card);
+      border-top:1px solid var(--border); padding-bottom:env(safe-area-inset-bottom,0px); box-shadow:0 -2px 16px rgba(0,0,0,.12); }
+    .m-nav-item { flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 2px 6px; background:none; border:none;
+      color:var(--muted); font-size:10px; font-weight:600; cursor:pointer; position:relative; }
+    .m-nav-item[data-active="true"] { color:var(--gold-dark); }
+    .m-nav-item .m-nav-ico { font-size:19px; line-height:1; }
+    /* Content clears the bottom nav */
+    main { padding-bottom:calc(74px + env(safe-area-inset-bottom,0px)) !important; }
+    /* Calendar gets full-width breathing room + zoom controls on mobile */
+    .cal-zoom-bar { display:flex !important; }
+  }
+  @media (min-width: 769px) {
+    #m-hamburger, #m-drawer, #m-drawer-backdrop, #m-bottomnav, .cal-zoom-bar { display:none !important; }
+  }
+
   @media print {
     body * { visibility:hidden; }
     #summary-content, #summary-content * { visibility:visible; }
@@ -299,6 +337,7 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <button id="m-hamburger" class="hidden nav-btn h-10 w-10 rounded-lg border brd items-center justify-center" aria-label="Open menu" style="font-size:20px">&#9776;</button>
         <div class="flex flex-col items-stretch mr-1 staff-only">
           <button id="sync-btn" title="Trigger a fresh sync from Metabase now" class="sync-btn group">
             <span id="sync-dot" class="sync-dot"></span>
@@ -326,12 +365,30 @@
   <!-- CONNECTION BANNER -->
   <div id="conn-banner" class="hidden"></div>
 
+  <!-- MOBILE: slide-in menu drawer (all views, role-gated via classes) -->
+  <div id="m-drawer-backdrop" class="hidden"></div>
+  <nav id="m-drawer" class="hidden" aria-label="Menu">
+    <div class="m-drawer-head">
+      <span class="m-drawer-title">Menu</span>
+      <button id="m-drawer-close" aria-label="Close menu">&times;</button>
+    </div>
+    <div id="m-drawer-links"></div>
+    <div class="m-drawer-foot">
+      <button id="m-theme" class="m-drawer-link">🌙 Toggle theme</button>
+      <button id="m-whoami" class="m-drawer-link">👤 My role</button>
+      <button id="m-signout" class="m-drawer-link" style="color:#ef4444">Sign out</button>
+    </div>
+  </nav>
+
+  <!-- MOBILE: bottom navigation for the most-used views -->
+  <nav id="m-bottomnav" class="hidden" aria-label="Quick navigation"></nav>
+
   <!-- KPI BAR -->
   <div id="kpi-bar" class="flex flex-wrap gap-2 mb-4"></div>
 
   <!-- TOOLBAR -->
   <div class="flex flex-wrap items-center gap-3 mb-4">
-    <div class="view-tabs inline-flex items-center gap-1">
+    <div class="view-tabs desktop-tabs inline-flex items-center gap-1">
       <button id="view-day" class="view-btn" data-view="day" data-active="true">Day</button>
       <button id="view-week" class="view-btn" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn" data-view="range" data-active="false">Range</button>
@@ -397,9 +454,16 @@
   </div>
 
   <!-- DAY GRID -->
+  <div class="cal-zoom-bar" style="display:none;align-items:center;gap:8px;margin-bottom:8px">
+    <span class="text-xs muted2">Zoom</span>
+    <button id="cal-zoom-out" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center" style="font-size:18px" aria-label="Zoom out">−</button>
+    <button id="cal-zoom-in" class="nav-btn h-9 w-9 rounded-lg border brd flex items-center justify-center" style="font-size:18px" aria-label="Zoom in">+</button>
+    <button id="cal-zoom-reset" class="nav-btn h-9 px-3 rounded-lg border brd text-sm" aria-label="Reset zoom">Fit</button>
+    <span class="text-xs muted2">Pinch or use +/− to see bookings</span>
+  </div>
   <div id="day-container" class="card rounded-2xl overflow-hidden">
-    <div class="grid-scroll overflow-x-auto">
-      <div class="min-w-[1400px]">
+    <div class="grid-scroll overflow-x-auto" id="day-scroll">
+      <div class="min-w-[1400px]" id="day-zoomable" style="transform-origin:top left">
         <div class="flex border-b brd surface sticky top-0 z-10">
           <div class="w-[224px] shrink-0 px-3 py-2 text-xs font-semibold muted2 uppercase tracking-wide border-r brd">Babysitter</div>
           <div id="time-header" class="flex-1 flex"></div>
@@ -4660,6 +4724,9 @@ function setTabLoading(containerId, on) {
     // Tickets + New Orders are for admins and homecare partners only — never support.
     if (currentRole === "support" && mode === "tickets") mode = "day";                             // support: tickets stay admin/homecare only
     viewMode = mode; document.querySelectorAll(".view-btn[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false")); renderGrid();
+    // keep mobile drawer + bottom nav in sync, and close the drawer after choosing
+    document.querySelectorAll("#m-drawer-links .m-drawer-link[data-view], #m-bottomnav .m-nav-item[data-view]").forEach(b => b.setAttribute("data-active", b.getAttribute("data-view")===mode?"true":"false"));
+    closeMobileDrawer();
   }
   document.getElementById("view-day").addEventListener("click", () => setView("day"));
   document.getElementById("view-week").addEventListener("click", () => setView("week"));
@@ -4676,6 +4743,97 @@ function setTabLoading(containerId, on) {
   { const nb = document.getElementById("analytics-btn"); if (nb) nb.addEventListener("click", () => setView("analytics")); }
   document.getElementById("view-requests").addEventListener("click", () => setView("requests"));
   document.getElementById("view-available").addEventListener("click", () => setView("available"));
+
+  // ===================== MOBILE NAVIGATION (drawer + bottom nav) =====================
+  // Full menu, grouped. Each entry is gated by role via a can() check mirroring setView.
+  const M_MENU = [
+    { section: "Calendar" },
+    { view:"day", label:"Day", ico:"📅" },
+    { view:"week", label:"Week", ico:"🗓️" },
+    { view:"range", label:"Range", ico:"📆" },
+    { section: "Operations" },
+    { view:"neworders", label:"New Orders", ico:"📥", badge:"neworders-badge" },
+    { view:"tickets", label:"Tickets", ico:"🎫", badge:"tickets-badge" },
+    { view:"requests", label:"Requests", ico:"📨", badge:"requests-badge" },
+    { view:"available", label:"Available", ico:"✅", badge:"available-badge" },
+    { view:"utilisation", label:"Utilisation", ico:"📊" },
+    { section: "Admin" },
+    { view:"revenue", label:"Revenue", ico:"💰" },
+    { view:"compliance", label:"Compliance", ico:"📋" },
+    { view:"incentives", label:"Incentives", ico:"🏆" },
+    { view:"profiles", label:"Profiles", ico:"👥" },
+    { view:"activity", label:"Activity", ico:"📜" },
+    { view:"analytics", label:"Analytics", ico:"📈" }
+  ];
+  // Which views each role may open (mirrors setView gates).
+  function canOpen(view) {
+    if (isHomecare) return ["day","week","range","utilisation","tickets","neworders"].includes(view);
+    if (currentRole === "support") return !["compliance","revenue","activity","analytics","profiles","incentives","tickets"].includes(view);
+    return true; // admin
+  }
+  function buildMobileNav() {
+    const wrap = document.getElementById("m-drawer-links");
+    if (!wrap) return;
+    let html = "";
+    M_MENU.forEach(item => {
+      if (item.section) { html += `<div class="m-drawer-section">${item.section}</div>`; return; }
+      if (!canOpen(item.view)) return;
+      const badge = item.badge ? `<span class="m-badge hidden" data-badge-for="${item.badge}"></span>` : "";
+      html += `<button class="m-drawer-link" data-view="${item.view}" data-active="${viewMode===item.view?'true':'false'}"><span>${item.ico}</span><span>${item.label}</span>${badge}</button>`;
+    });
+    wrap.innerHTML = html;
+    wrap.querySelectorAll(".m-drawer-link[data-view]").forEach(b => b.addEventListener("click", () => setView(b.getAttribute("data-view"))));
+
+    // Bottom nav: up to 5 core views the role can open.
+    const coreOrder = isHomecare
+      ? ["day","neworders","tickets","utilisation","week"]
+      : (currentRole === "support"
+          ? ["day","neworders","available","requests","utilisation"]
+          : ["day","neworders","available","tickets","revenue"]);
+    const core = coreOrder.filter(canOpen).slice(0,5);
+    const icoOf = v => (M_MENU.find(m => m.view===v)||{}).ico || "•";
+    const labOf = v => (M_MENU.find(m => m.view===v)||{}).label || v;
+    const bn = document.getElementById("m-bottomnav");
+    if (bn) {
+      bn.innerHTML = core.map(v => `<button class="m-nav-item" data-view="${v}" data-active="${viewMode===v?'true':'false'}"><span class="m-nav-ico">${icoOf(v)}</span><span>${labOf(v)}</span></button>`).join("")
+        + `<button class="m-nav-item" id="m-more"><span class="m-nav-ico">☰</span><span>More</span></button>`;
+      bn.querySelectorAll(".m-nav-item[data-view]").forEach(b => b.addEventListener("click", () => setView(b.getAttribute("data-view"))));
+      const more = document.getElementById("m-more"); if (more) more.addEventListener("click", openMobileDrawer);
+    }
+    syncMobileBadges();
+  }
+  // Mirror the tab badges (tickets/new orders/etc.) into the mobile menu.
+  function syncMobileBadges() {
+    document.querySelectorAll("#m-drawer-links .m-badge[data-badge-for]").forEach(mb => {
+      const src = document.getElementById(mb.getAttribute("data-badge-for"));
+      if (src && !src.classList.contains("hidden") && src.textContent) { mb.textContent = src.textContent; mb.classList.remove("hidden"); }
+      else mb.classList.add("hidden");
+    });
+  }
+  function openMobileDrawer(){ syncMobileBadges(); document.getElementById("m-drawer").classList.remove("hidden"); document.getElementById("m-drawer-backdrop").classList.remove("hidden"); }
+  function closeMobileDrawer(){ const d=document.getElementById("m-drawer"); const b=document.getElementById("m-drawer-backdrop"); if(d) d.classList.add("hidden"); if(b) b.classList.add("hidden"); }
+  { const h=document.getElementById("m-hamburger"); if(h) h.addEventListener("click", openMobileDrawer); }
+  { const c=document.getElementById("m-drawer-close"); if(c) c.addEventListener("click", closeMobileDrawer); }
+  { const bd=document.getElementById("m-drawer-backdrop"); if(bd) bd.addEventListener("click", closeMobileDrawer); }
+  { const t=document.getElementById("m-theme"); if(t) t.addEventListener("click", ()=>{ document.getElementById("theme-toggle").click(); }); }
+  { const w=document.getElementById("m-whoami"); if(w) w.addEventListener("click", ()=>{ closeMobileDrawer(); document.getElementById("whoami-btn").click(); }); }
+  { const s=document.getElementById("m-signout"); if(s) s.addEventListener("click", ()=>{ document.getElementById("signout-btn").click(); }); }
+  // Refresh badges periodically so the mobile menu stays current.
+  setInterval(syncMobileBadges, 5000);
+
+  // Calendar zoom (mobile): scale the day grid so users can zoom in/out to read bookings.
+  let calZoom = 1;
+  function applyCalZoom() {
+    const z = document.getElementById("day-zoomable"); if (!z) return;
+    z.style.transform = "scale(" + calZoom + ")";
+    // Compensate width so horizontal scroll still reaches the far edge when zoomed out/in.
+    z.style.width = (100 / calZoom) + "%";
+  }
+  { const zi=document.getElementById("cal-zoom-in"); if(zi) zi.addEventListener("click", ()=>{ calZoom=Math.min(2, calZoom+0.15); applyCalZoom(); }); }
+  { const zo=document.getElementById("cal-zoom-out"); if(zo) zo.addEventListener("click", ()=>{ calZoom=Math.max(0.5, calZoom-0.15); applyCalZoom(); }); }
+  { const zr=document.getElementById("cal-zoom-reset"); if(zr) zr.addEventListener("click", ()=>{ calZoom=1; applyCalZoom(); }); }
+  // ==================================================================================
+
   document.getElementById("view-incentives").addEventListener("click", () => setView("incentives"));
 
   document.getElementById("search-input").addEventListener("input", e => { searchText = e.target.value.trim().toLowerCase(); renderGrid(); });
@@ -5366,6 +5524,7 @@ function setTabLoading(containerId, on) {
       currentAgency = isHomecare ? (HOMECARE_AGENCY[currentUserEmail.toLowerCase()] || "") : "";
       document.body.classList.remove("role-admin", "role-support", "role-homecare", "viewer");
       document.body.classList.add("role-" + currentRole);
+      try { buildMobileNav(); } catch(e){ console.warn("mobile nav:", e); }
       if (!isAdmin) document.body.classList.add("viewer");   // .admin-only stays admin-exclusive
       loginOverlay.classList.add("hidden");
       const so = document.getElementById("signout-btn");
