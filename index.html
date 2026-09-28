@@ -234,7 +234,7 @@
     /* Ticket chat takes more of the screen on mobile */
     #tkt-chat { height: 78vh !important; }
     /* Bottom padding so the last row clears the phone's home bar */
-    main, .pb-safe { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+    /* Bottom clearance handled via #app-root below */
   }
   @media (max-width: 400px) {
     body { font-size: 14px; }
@@ -274,12 +274,19 @@
     .m-nav-item[data-active="true"] { color:var(--gold-dark); }
     .m-nav-item .m-nav-ico { font-size:19px; line-height:1; }
     /* Content clears the bottom nav */
-    main { padding-bottom:calc(74px + env(safe-area-inset-bottom,0px)) !important; }
+    #app-root { padding-bottom:calc(80px + env(safe-area-inset-bottom,0px)) !important; }
+    /* Calendar height fits its content on mobile (kills the big blank gap under the rows) */
+    #day-container, #span-container { height:auto !important; }
+    #day-scroll { max-height:none !important; height:auto !important; }
+    #day-zoomable, #nurse-rows { height:auto !important; }
     /* Calendar gets full-width breathing room + zoom controls on mobile */
     .cal-zoom-bar { display:flex !important; }
   }
   @media (min-width: 769px) {
     #m-hamburger, #m-drawer, #m-drawer-backdrop, #m-bottomnav, .cal-zoom-bar { display:none !important; }
+    /* Header polish: the right-side controls wrap as a tidy right-aligned group */
+    #app-root > .card:first-child > .flex { align-items:flex-start; }
+    #app-root > .card:first-child > .flex > .flex:last-child { flex-wrap:wrap; justify-content:flex-end; row-gap:8px; }
   }
 
   @media print {
@@ -308,7 +315,7 @@
   </div>
 
 
-<div class="max-w-[1600px] mx-auto p-4 md:p-6">
+<div class="max-w-[1600px] mx-auto p-4 md:p-6" id="app-root">
 
   <!-- HEADER -->
   <div class="card rounded-2xl mb-5 overflow-hidden">
