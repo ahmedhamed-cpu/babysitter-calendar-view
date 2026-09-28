@@ -400,6 +400,7 @@
       <button id="view-week" class="view-btn" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn" data-view="range" data-active="false">Range</button>
       <button id="view-util" class="view-btn" data-view="utilisation" data-active="false">Utilisation</button>
+      <button id="view-unassigned" class="view-btn" data-view="unassigned" data-active="false">Unassigned <span id="unassigned-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
        <button id="view-compliance" class="view-btn admin-tab-only" data-view="compliance" data-active="false">Compliance</button>
       <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-tickets" class="view-btn support-hidden-tab" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
@@ -705,6 +706,17 @@
       <div id="av-summary" class="flex flex-wrap gap-2 mb-4"></div>
       <div id="av-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))"></div>
       <div id="av-note" class="text-xs muted2 mt-4"></div>
+    </div>
+
+  <div id="unassigned-container" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div id="un-filter" class="flex gap-1 flex-wrap"></div>
+        <input id="un-search" type="text" placeholder="Search order, client, package, city…" class="icon-input h-9 px-3 rounded-lg border brd text-sm" style="min-width:220px" />
+        <span id="un-count" class="text-xs muted2"></span>
+      </div>
+      <div id="un-summary" class="flex flex-wrap gap-2 mb-4"></div>
+      <div id="un-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))"></div>
+      <div id="un-note" class="text-xs muted2 mt-4"></div>
     </div>
 
   <div id="incentives-container" class="hidden">
@@ -2175,9 +2187,9 @@ function setTabLoading(containerId, on) {
     populateFilters();
     document.getElementById("range-inputs").className = (viewMode === "range" || viewMode === "utilisation" || viewMode === "compliance" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
     document.getElementById("revenue-controls").className = (viewMode === "revenue" ? "flex" : "hidden") + " items-center gap-2 text-sm muted";
-    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics" || viewMode === "requests" || viewMode === "available" || viewMode === "incentives") ? "none" : "flex";
+    document.getElementById("kpi-bar").style.display = (viewMode === "profiles" || viewMode === "compliance" || viewMode === "revenue" || viewMode === "tickets" || viewMode === "neworders" || viewMode === "activity" || viewMode === "analytics" || viewMode === "requests" || viewMode === "available" || viewMode === "incentives" || viewMode === "unassigned") ? "none" : "flex";
 
-    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container","requests-container","available-container","incentives-container"];
+    const containers = ["day-container","span-container","util-container","compliance-container","revenue-container","tickets-container","profiles-container","activity-container","neworders-container","analytics-container","requests-container","available-container","incentives-container","unassigned-container"];
     const show = id => containers.forEach(c => document.getElementById(c).classList.toggle("hidden", c !== id));
 
     if (viewMode === "profiles") { show("profiles-container"); document.getElementById("empty-state").classList.add("hidden"); renderProfiles(); return; }
@@ -2189,6 +2201,7 @@ function setTabLoading(containerId, on) {
     if (viewMode === "analytics") { show("analytics-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Analytics"; loadAnalytics(); return; }
     if (viewMode === "activity") { show("activity-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Activity log"; renderActivity(); return; }
     if (viewMode === "neworders") { show("neworders-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "New order requests"; renderNewOrders(); return; }
+    if (viewMode === "unassigned") { show("unassigned-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Orders awaiting assignment"; loadUnassigned(); return; }
     if (viewMode === "requests") { show("requests-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Customer requests"; renderRequests(); return; }
     if (viewMode === "available") { show("available-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Available babysitters"; loadAvailable(); return; }
     if (viewMode === "incentives") { show("incentives-container"); document.getElementById("empty-state").classList.add("hidden"); document.getElementById("subtitle").textContent = "Babysitter incentives"; loadIncentives(); return; }
@@ -3021,6 +3034,110 @@ function setTabLoading(containerId, on) {
   { const b=document.getElementById("inc-export"); if(b) b.addEventListener("click", exportIncentives); }
   { const b=document.getElementById("inc-search"); if(b) b.addEventListener("input", e=>{ incSearch=e.target.value; renderIncentives(); }); }
   // ==============================================================================
+
+  // ======================= UNASSIGNED ORDERS (assignment queue) =======================
+  // Orders whose lifecycle status is NOT yet Nurse Assigned / Completed — i.e. still need a
+  // nurse assigned. Reads the raw order status straight from the source (FIELD.orderStatus).
+  const UNASSIGNED_STATUSES = ["BROADCASTING","HC UNASSIGNED","HC ASSIGNED","ORDER CONFIRMED","ORDER CREATED","LAB UNASSIGNED"];
+  const UN_FORWARD_DAYS = 120, UN_BACK_DAYS = 7;
+  let unData = [];          // filtered rows
+  let unFilter = "all";     // status filter
+  let unSearch = "";
+
+  function rawOrderStatus(d) { return String(fieldVal(d, FIELD.orderStatus) || "").trim().toUpperCase(); }
+  function isUnassignedOrder(d) { return UNASSIGNED_STATUSES.includes(rawOrderStatus(d)); }
+
+  async function loadUnassigned() {
+    if (!isStaff && !isHomecare) return;
+    const listEl = document.getElementById("un-list");
+    listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Loading orders…</div>';
+    const lo = dateKey(new Date(nowR().getTime() - UN_BACK_DAYS*86400000));
+    const hi = dateKey(new Date(nowR().getTime() + UN_FORWARD_DAYS*86400000));
+    let rows = [];
+    try { rows = await fetchPeriod(lo, hi); } catch(e){ console.warn("unassigned fetch:", e); listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Could not load orders.</div>'; return; }
+    unData = rows.filter(b => {
+      if (!isUnassignedOrder(b.data)) return false;
+      if (isHomecare) { const ag = canonAgency(fieldVal(b.data, FIELD.homecare) || b.data.homecare || ""); if (ag !== currentAgency) return false; }
+      return true;
+    }).map(b => ({ id:b.id, d:b.data, st:rawOrderStatus(b.data), dt:parseSlotDateTime(b.data) }))
+      .sort((a,b)=> (a.dt?.getTime()||0) - (b.dt?.getTime()||0));
+    updateUnassignedBadge();
+    renderUnassigned();
+  }
+
+  function updateUnassignedBadge() {
+    const badge = document.getElementById("unassigned-badge");
+    const n = unData.length;
+    if (badge){ if(n>0){ badge.textContent = n; badge.classList.remove("hidden"); } else badge.classList.add("hidden"); }
+  }
+
+  function titleCaseStatus(s){ return String(s||"").toLowerCase().replace(/\b\w/g, c=>c.toUpperCase()); }
+  function statusChipColor(s){
+    if (s==="BROADCASTING") return "#8b5cf6";
+    if (s.indexOf("UNASSIGNED")>=0) return "#ef4444";
+    if (s.indexOf("ASSIGNED")>=0) return "#f59e0b";
+    if (s.indexOf("CONFIRMED")>=0) return "#3b82f6";
+    if (s.indexOf("CREATED")>=0) return "#6b7280";
+    return "#f59e0b";
+  }
+  function fmtDateTimeShort(d){ try { return d.toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); } catch(e){ return dateKey(d); } }
+  function unNote() {
+    return `Orders whose status is <b>${UNASSIGNED_STATUSES.map(titleCaseStatus).join(", ")}</b> — i.e. still need a nurse assigned. Sorted soonest first. The red dot on the tab shows how many are waiting. ${isHomecare?"Shows your agency's orders only.":""} Updates when you open the tab or hit Sync.`;
+  }
+
+  function renderUnassigned() {
+    const counts = {}; unData.forEach(r => counts[r.st] = (counts[r.st]||0)+1);
+    const fWrap = document.getElementById("un-filter");
+    const chips = [["all","All"]].concat(UNASSIGNED_STATUSES.filter(s=>counts[s]).map(s=>[s, titleCaseStatus(s)+" ("+counts[s]+")"]));
+    fWrap.innerHTML = chips.map(([v,l]) => `<button data-un="${v}" class="tkt-filter-btn" data-active="${unFilter===v?'true':'false'}">${escapeHtml(l)}</button>`).join("");
+    fWrap.querySelectorAll(".tkt-filter-btn").forEach(b => b.addEventListener("click", () => { unFilter=b.getAttribute("data-un"); renderUnassigned(); }));
+
+    const q = unSearch.trim().toLowerCase();
+    let list = unData.filter(r => unFilter==="all" || r.st===unFilter);
+    if (q) list = list.filter(r => {
+      const hay = `${fieldVal(r.d,FIELD.orderId)||""} ${fieldVal(r.d,FIELD.customer)||""} ${fieldVal(r.d,FIELD.pkg)||""} ${fieldVal(r.d,FIELD.city)||""} ${fieldVal(r.d,FIELD.homecare)||""}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+    document.getElementById("un-count").textContent = list.length + (list.length===1?" order":" orders");
+    const tile = (l,v,c) => `<div class="kpi"><div class="k-label">${l}</div><div class="k-val" style="${c?`color:${c}`:""}">${v}</div></div>`;
+    document.getElementById("un-summary").innerHTML =
+      tile("Awaiting assignment", unData.length, unData.length?"#ef4444":"") +
+      tile("Showing", list.length) +
+      tile("Soonest", unData[0] && unData[0].dt ? escapeHtml(fmtShortDate(unData[0].dt)) : "—");
+
+    const wrap = document.getElementById("un-list");
+    if (!list.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">No orders awaiting assignment. ✅</div>'; document.getElementById("un-note").innerHTML = unNote(); return; }
+    wrap.innerHTML = list.map(r => {
+      const d = r.d;
+      const stColor = statusChipColor(r.st);
+      const when = r.dt ? escapeHtml(fmtDateTimeShort(r.dt)) : "—";
+      const client = escapeHtml(String(fieldVal(d,FIELD.customer)||"—"));
+      const pkg = escapeHtml(String(fieldVal(d,FIELD.pkg)||"—"));
+      const city = escapeHtml(String(fieldVal(d,FIELD.city)||"—"));
+      const partner = escapeHtml(String(fieldVal(d,FIELD.homecare)||d.homecare||"—"));
+      const oid = escapeHtml(String(fieldVal(d,FIELD.orderId)||r.id));
+      const mapUrl = fieldVal(d, FIELD.clientLocation);
+      return `<div class="card rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs font-mono muted2">${oid}</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:${hexA(stColor,0.16)};color:${stColor}">${escapeHtml(titleCaseStatus(r.st))}</span>
+        </div>
+        <div class="text-sm font-semibold" style="color:var(--text)">${client}</div>
+        <div class="text-xs muted2 mt-0.5">${pkg}</div>
+        <div class="grid grid-cols-2 gap-1 text-xs mt-2">
+          <div><span class="muted2">When</span><br>${when}</div>
+          <div><span class="muted2">City</span><br>${city}</div>
+          <div><span class="muted2">Partner</span><br>${partner}</div>
+          <div><span class="muted2">Status</span><br>${escapeHtml(titleCaseStatus(r.st))}</div>
+        </div>
+        ${mapUrl?`<a href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold mt-2 inline-block" style="color:var(--sage)">📍 View location</a>`:""}
+      </div>`;
+    }).join("");
+    document.getElementById("un-note").innerHTML = unNote();
+  }
+  { const us=document.getElementById("un-search"); if(us) us.addEventListener("input", e=>{ unSearch=e.target.value; renderUnassigned(); }); }
+  // ==================================================================================
 
   // ======================= AVAILABLE BABYSITTERS (staff/sales) =======================
   // "Free" = an active babysitter with NO bookings from today onward.
@@ -4723,7 +4840,7 @@ function setTabLoading(containerId, on) {
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
    function setView(mode) {
-    if (isHomecare && !["day","week","range","utilisation","tickets","neworders"].includes(mode)) mode = "day";      // homecare partners
+    if (isHomecare && !["day","week","range","utilisation","tickets","neworders","unassigned"].includes(mode)) mode = "day";      // homecare partners
     if (!isAdmin && ["compliance","revenue","activity","analytics","profiles","incentives"].includes(mode)) mode = "day";
     if (!isStaff && mode === "requests") mode = "day";
     if (!isStaff && mode === "available") mode = "day";
@@ -4747,6 +4864,7 @@ function setTabLoading(containerId, on) {
   document.getElementById("view-profiles").addEventListener("click", () => setView("profiles"));
   { const ab = document.getElementById("activity-btn"); if (ab) ab.addEventListener("click", () => setView("activity")); }
   document.getElementById("view-neworders").addEventListener("click", () => setView("neworders"));
+  document.getElementById("view-unassigned").addEventListener("click", () => setView("unassigned"));
   { const nb = document.getElementById("analytics-btn"); if (nb) nb.addEventListener("click", () => setView("analytics")); }
   document.getElementById("view-requests").addEventListener("click", () => setView("requests"));
   document.getElementById("view-available").addEventListener("click", () => setView("available"));
@@ -5299,6 +5417,8 @@ function setTabLoading(containerId, on) {
     startTicketsListener();
     startNewOrdersListener();
     startRequestsListener();
+    // Background: compute the unassigned-orders count so the tab's red dot shows immediately.
+    if (isStaff || isHomecare) { setTimeout(() => { loadUnassigned().catch(()=>{}); }, 3000); }
     startCostListeners();
     // Admin-only audit trail listener (rules restrict reads to admins).
     if (isAdmin) {
