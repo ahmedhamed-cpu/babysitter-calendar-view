@@ -715,7 +715,7 @@
         <span id="un-count" class="text-xs muted2"></span>
       </div>
       <div id="un-summary" class="flex flex-wrap gap-2 mb-4"></div>
-      <div id="un-list" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))"></div>
+      <div id="un-list" class="flex flex-col gap-1.5"></div>
       <div id="un-note" class="text-xs muted2 mt-4"></div>
     </div>
 
@@ -3039,7 +3039,9 @@ function setTabLoading(containerId, on) {
   // Orders whose lifecycle status is NOT yet Nurse Assigned / Completed — i.e. still need a
   // nurse assigned. Reads the raw order status straight from the source (FIELD.orderStatus).
   const UNASSIGNED_STATUSES = ["BROADCASTING","HC UNASSIGNED","HC ASSIGNED","ORDER CONFIRMED","ORDER CREATED","LAB UNASSIGNED"];
-  const UN_FORWARD_DAYS = 120, UN_BACK_DAYS = 7;
+  // Window for the assignment queue. Default: the upcoming 7 days (+3 days back for overdue).
+  // To show the current month instead, set UN_FORWARD_DAYS = 31. To widen, bump the number.
+  const UN_FORWARD_DAYS = 7, UN_BACK_DAYS = 3;
   let unData = [];          // filtered rows
   let unFilter = "all";     // status filter
   let unSearch = "";
@@ -3056,6 +3058,7 @@ function setTabLoading(containerId, on) {
     let rows = [];
     try { rows = await fetchPeriod(lo, hi); } catch(e){ console.warn("unassigned fetch:", e); listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Could not load orders.</div>'; return; }
     unData = rows.filter(b => {
+      if (b.data.unassignedDismissed === true) return false;     // admin cleared it (assigned)
       if (!isUnassignedOrder(b.data)) return false;
       if (isHomecare) { const ag = canonAgency(fieldVal(b.data, FIELD.homecare) || b.data.homecare || ""); if (ag !== currentAgency) return false; }
       return true;
@@ -3082,7 +3085,7 @@ function setTabLoading(containerId, on) {
   }
   function fmtDateTimeShort(d){ try { return d.toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); } catch(e){ return dateKey(d); } }
   function unNote() {
-    return `Orders whose status is <b>${UNASSIGNED_STATUSES.map(titleCaseStatus).join(", ")}</b> — i.e. still need a nurse assigned. Sorted soonest first. The red dot on the tab shows how many are waiting. ${isHomecare?"Shows your agency's orders only.":""} Updates when you open the tab or hit Sync.`;
+    return `Orders still needing a nurse assigned (status: <b>${UNASSIGNED_STATUSES.map(titleCaseStatus).join(", ")}</b>), for the <b>next ${UN_FORWARD_DAYS} days</b>. Sorted soonest first; the red dot shows how many are waiting. ${isAdmin?"Tap <b>✓ Assigned</b> to clear an order once you've assigned it. ":""}${isHomecare?"Shows your agency's orders only. ":""}Updates when you open the tab or hit Sync.`;
   }
 
   function renderUnassigned() {
@@ -3107,7 +3110,7 @@ function setTabLoading(containerId, on) {
       tile("Soonest", unData[0] && unData[0].dt ? escapeHtml(fmtShortDate(unData[0].dt)) : "—");
 
     const wrap = document.getElementById("un-list");
-    if (!list.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">No orders awaiting assignment. ✅</div>'; document.getElementById("un-note").innerHTML = unNote(); return; }
+    if (!list.length){ wrap.innerHTML = '<div class="p-6 text-center muted2 text-sm">No orders awaiting assignment in this window. ✅</div>'; document.getElementById("un-note").innerHTML = unNote(); return; }
     wrap.innerHTML = list.map(r => {
       const d = r.d;
       const stColor = statusChipColor(r.st);
@@ -3118,23 +3121,34 @@ function setTabLoading(containerId, on) {
       const partner = escapeHtml(String(fieldVal(d,FIELD.homecare)||d.homecare||"—"));
       const oid = escapeHtml(String(fieldVal(d,FIELD.orderId)||r.id));
       const mapUrl = fieldVal(d, FIELD.clientLocation);
-      return `<div class="card rounded-2xl p-4">
-        <div class="flex items-center justify-between mb-1.5">
-          <span class="text-xs font-mono muted2">${oid}</span>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:${hexA(stColor,0.16)};color:${stColor}">${escapeHtml(titleCaseStatus(r.st))}</span>
+      return `<div class="card rounded-xl px-3 py-2.5 flex items-center gap-3" style="border-left:3px solid ${stColor}">
+        <div class="shrink-0" style="width:118px">
+          <div class="text-[13px] font-semibold" style="color:var(--text)">${when}</div>
+          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style="background:${hexA(stColor,0.16)};color:${stColor}">${escapeHtml(titleCaseStatus(r.st))}</span>
         </div>
-        <div class="text-sm font-semibold" style="color:var(--text)">${client}</div>
-        <div class="text-xs muted2 mt-0.5">${pkg}</div>
-        <div class="grid grid-cols-2 gap-1 text-xs mt-2">
-          <div><span class="muted2">When</span><br>${when}</div>
-          <div><span class="muted2">City</span><br>${city}</div>
-          <div><span class="muted2">Partner</span><br>${partner}</div>
-          <div><span class="muted2">Status</span><br>${escapeHtml(titleCaseStatus(r.st))}</div>
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-medium truncate" style="color:var(--text)">${client} <span class="muted2 font-normal">· ${pkg}</span></div>
+          <div class="text-[11px] muted2 truncate">#${oid} · ${city} · ${partner}${mapUrl?` · <a href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--sage)">📍 map</a>`:""}</div>
         </div>
-        ${mapUrl?`<a href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold mt-2 inline-block" style="color:var(--sage)">📍 View location</a>`:""}
+        ${isAdmin?`<button class="un-dismiss shrink-0 text-[11px] font-semibold px-2 py-1 rounded-lg" data-id="${escapeHtml(r.id)}" data-name="${client}" style="background:rgba(239,68,68,.1);color:#dc2626;border:1px solid rgba(239,68,68,.3)" title="Remove from the unassigned list once assigned">✓ Assigned</button>`:""}
       </div>`;
     }).join("");
+    if (isAdmin) wrap.querySelectorAll(".un-dismiss").forEach(b => b.addEventListener("click", () => dismissUnassigned(b.getAttribute("data-id"), b.getAttribute("data-name"))));
     document.getElementById("un-note").innerHTML = unNote();
+  }
+
+  // Admin: remove an order from the unassigned queue (it's been assigned). Uses an admin-namespaced
+  // flag the sync never touches, so it stays dismissed and is filtered out of this list.
+  async function dismissUnassigned(id, name) {
+    if (!isAdmin || !id) return;
+    try {
+      await setDoc(doc(db, "bookings", id), { unassignedDismissed: true, unassignedDismissedAt: new Date().toISOString(), unassignedDismissedBy: currentUserEmail||"admin" }, { merge:true });
+      logActivity("Cleared from unassigned", "", name + " · " + id);
+      // drop it locally and re-render immediately
+      unData = unData.filter(r => r.id !== id);
+      updateUnassignedBadge();
+      renderUnassigned();
+    } catch(e){ console.error("dismiss unassigned:", e); alert("Could not update (check bookings write rules)."); }
   }
   { const us=document.getElementById("un-search"); if(us) us.addEventListener("input", e=>{ unSearch=e.target.value; renderUnassigned(); }); }
   // ==================================================================================
