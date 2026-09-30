@@ -400,7 +400,7 @@
       <button id="view-week" class="view-btn" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn" data-view="range" data-active="false">Range</button>
       <button id="view-util" class="view-btn" data-view="utilisation" data-active="false">Utilisation</button>
-      <button id="view-unassigned" class="view-btn" data-view="unassigned" data-active="false">Unassigned <span id="unassigned-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
+      <button id="view-unassigned" class="view-btn staff-tab-only" data-view="unassigned" data-active="false">Unassigned <span id="unassigned-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
        <button id="view-compliance" class="view-btn admin-tab-only" data-view="compliance" data-active="false">Compliance</button>
       <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
       <button id="view-tickets" class="view-btn support-hidden-tab" data-view="tickets" data-active="false">Tickets <span id="tickets-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
@@ -3045,12 +3045,13 @@ function setTabLoading(containerId, on) {
   let unData = [];          // filtered rows
   let unFilter = "all";     // status filter
   let unSearch = "";
+  const unDismissedLocal = new Set();   // orders trashed from view this session (no storage)
 
   function rawOrderStatus(d) { return String(fieldVal(d, FIELD.orderStatus) || "").trim().toUpperCase(); }
   function isUnassignedOrder(d) { return UNASSIGNED_STATUSES.includes(rawOrderStatus(d)); }
 
   async function loadUnassigned() {
-    if (!isStaff && !isHomecare) return;
+    if (!isStaff) return;   // staff/admin only — never partners
     const listEl = document.getElementById("un-list");
     listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Loading orders…</div>';
     const lo = dateKey(new Date(nowR().getTime() - UN_BACK_DAYS*86400000));
@@ -3058,7 +3059,7 @@ function setTabLoading(containerId, on) {
     let rows = [];
     try { rows = await fetchPeriod(lo, hi); } catch(e){ console.warn("unassigned fetch:", e); listEl.innerHTML = '<div class="p-6 text-center muted2 text-sm" style="grid-column:1/-1">Could not load orders.</div>'; return; }
     unData = rows.filter(b => {
-      if (b.data.unassignedDismissed === true) return false;     // admin cleared it (assigned)
+      if (unDismissedLocal.has(b.id)) return false;              // admin trashed it this session
       if (!isUnassignedOrder(b.data)) return false;
       if (isHomecare) { const ag = canonAgency(fieldVal(b.data, FIELD.homecare) || b.data.homecare || ""); if (ag !== currentAgency) return false; }
       return true;
@@ -3137,18 +3138,15 @@ function setTabLoading(containerId, on) {
     document.getElementById("un-note").innerHTML = unNote();
   }
 
-  // Admin: remove an order from the unassigned queue (it's been assigned). Uses an admin-namespaced
-  // flag the sync never touches, so it stays dismissed and is filtered out of this list.
-  async function dismissUnassigned(id, name) {
+  // Admin: trash an order from the unassigned view for this session (no Firestore write).
+  // It will reappear on the next refresh/sync — by then the source status should show it
+  // as genuinely assigned, so it drops off naturally.
+  function dismissUnassigned(id, name) {
     if (!isAdmin || !id) return;
-    try {
-      await setDoc(doc(db, "bookings", id), { unassignedDismissed: true, unassignedDismissedAt: new Date().toISOString(), unassignedDismissedBy: currentUserEmail||"admin" }, { merge:true });
-      logActivity("Cleared from unassigned", "", name + " · " + id);
-      // drop it locally and re-render immediately
-      unData = unData.filter(r => r.id !== id);
-      updateUnassignedBadge();
-      renderUnassigned();
-    } catch(e){ console.error("dismiss unassigned:", e); alert("Could not update (check bookings write rules)."); }
+    unDismissedLocal.add(id);
+    unData = unData.filter(r => r.id !== id);
+    updateUnassignedBadge();
+    renderUnassigned();
   }
   { const us=document.getElementById("un-search"); if(us) us.addEventListener("input", e=>{ unSearch=e.target.value; renderUnassigned(); }); }
   // ==================================================================================
@@ -4854,7 +4852,7 @@ function setTabLoading(containerId, on) {
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
    function setView(mode) {
-    if (isHomecare && !["day","week","range","utilisation","tickets","neworders","unassigned"].includes(mode)) mode = "day";      // homecare partners
+    if (isHomecare && !["day","week","range","utilisation","tickets","neworders"].includes(mode)) mode = "day";      // homecare partners
     if (!isAdmin && ["compliance","revenue","activity","analytics","profiles","incentives"].includes(mode)) mode = "day";
     if (!isStaff && mode === "requests") mode = "day";
     if (!isStaff && mode === "available") mode = "day";
@@ -5431,8 +5429,8 @@ function setTabLoading(containerId, on) {
     startTicketsListener();
     startNewOrdersListener();
     startRequestsListener();
-    // Background: compute the unassigned-orders count so the tab's red dot shows immediately.
-    if (isStaff || isHomecare) { setTimeout(() => { loadUnassigned().catch(()=>{}); }, 3000); }
+    // Background: compute the unassigned-orders count so the tab's red dot shows immediately (staff only).
+    if (isStaff) { setTimeout(() => { loadUnassigned().catch(()=>{}); }, 3000); }
     startCostListeners();
     // Admin-only audit trail listener (rules restrict reads to admins).
     if (isAdmin) {
