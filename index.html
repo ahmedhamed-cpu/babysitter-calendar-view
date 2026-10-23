@@ -1141,7 +1141,7 @@ function populateGeneralTicketTypes() {
   if (ag) {
     const set = new Set();
     Object.values(bsUniverse || {}).forEach(u => { if (u.agency) set.add(u.agency); });
-    ag.innerHTML = '<option value="">Select partner…</option>' + [...set].sort().map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
+    ag.innerHTML = '<option value="">Select partner…</option>' + [...set].sort().map(a => `<option value="${escapeHtml(a)}">${escapeHtml(agencyDisplay(a))}</option>`).join("");
   }
 }
 function updateGRouteHint() {
@@ -2080,6 +2080,13 @@ function setTabLoading(containerId, on) {
     if (t.includes("tamaam") || t.includes("tammam") || t.includes("tamam") || t.includes("taman")) return "Tamaam HC";
     return String(s || "").trim();
   }
+  // DISPLAY ONLY: rename agencies for what users see, without touching the underlying data or
+  // matching (bookings still say "Helpful Agency"; we just show it as "Golden Care").
+  const AGENCY_DISPLAY = { "helpful agency": "Golden Care" };
+  function agencyDisplay(s) {
+    const canon = canonAgency(s);
+    return AGENCY_DISPLAY[canon.toLowerCase()] || canon;
+  }
   function agencyColor(a) { const s = canonAgency(a).toLowerCase(); if (s.includes("helpful")) return "#3b82f6"; if (s.includes("tamaam") || s.includes("tammam") || s.includes("tamam")) return "#0ea5a3"; return "#94a3b8"; }
 
   // ---------- SHARED BOOKING CARD ----------
@@ -2128,9 +2135,10 @@ function setTabLoading(containerId, on) {
       </div>`;
   }
 
-  function populateSelect(id, values, allLabel) {
+  function populateSelect(id, values, allLabel, labelFn) {
     const sel = document.getElementById(id);
-    const html = [`<option value="">${allLabel}</option>`].concat([...values].sort().map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`)).join("");
+    const disp = labelFn || (v => v);   // value stays real; only the shown label can change
+    const html = [`<option value="">${allLabel}</option>`].concat([...values].sort().map(v => `<option value="${escapeHtml(v)}">${escapeHtml(disp(v))}</option>`)).join("");
     if (sel.getAttribute("data-sig") !== html) { const cur = sel.value; sel.innerHTML = html; sel.setAttribute("data-sig", html); sel.value = values.has(cur) ? cur : ""; }
   }
   function populateFilters() {
@@ -2152,7 +2160,7 @@ function setTabLoading(containerId, on) {
     Object.values(bsUniverse).forEach(u => { if (u.agency) ags.add(u.agency); if (u.city) cities.add(u.city); });
     populateSelect("pkg-filter", pkgs, "All packages");
     populateSelect("b2b-filter", b2bs, "All B2B partners");
-    populateSelect("hc-filter", ags, "All agencies");
+    populateSelect("hc-filter", ags, "All agencies", agencyDisplay);
     populateSelect("city-filter", cities, "All cities");
   }
   // ---------- ON-DEMAND PERIOD FETCH (for Revenue / Utilisation / Compliance) ----------
@@ -2452,7 +2460,7 @@ function setTabLoading(containerId, on) {
           <span class="h-3 w-3 rounded-full shrink-0" style="background:${colorFor(r.name)}"></span>
           <span class="font-medium truncate" style="color:var(--text)">${escapeHtml(r.name)}</span>
           ${r.bookings ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ml-auto" style="background:${hexA(ec,0.16)};color:${ec}">${eng}</span>` : `<span class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ml-auto" style="background:${hexA('#94a3b8',0.16)};color:#94a3b8">idle</span>`}</div>
-        <div class="w-[140px] shrink-0 px-3 py-2 border-r brd2 truncate"><span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style="background:${hexA(ac,0.14)};color:${ac}">${escapeHtml(r.agency||"—")}</span></div>
+        <div class="w-[140px] shrink-0 px-3 py-2 border-r brd2 truncate"><span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style="background:${hexA(ac,0.14)};color:${ac}">${escapeHtml(agencyDisplay(r.agency)||"—")}</span></div>
         <div class="w-[110px] shrink-0 px-3 py-2 border-r brd2 truncate muted">${escapeHtml(r.city||"—")}</div>
         <div class="w-[80px] shrink-0 px-3 py-2 text-center border-r brd2">${r.bookings}</div>
         <div class="w-[70px] shrink-0 px-3 py-2 text-center border-r brd2">${r.daysWorked}</div>
@@ -3307,7 +3315,7 @@ function setTabLoading(containerId, on) {
           ${avatar}
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 flex-wrap"><span class="font-semibold text-sm truncate" style="color:var(--text)">${escapeHtml(u.name)}</span>${statusPill}${manualPill}</div>
-            <div class="text-[11px] muted2 truncate mt-0.5"><span class="font-semibold" style="color:${ac}">${escapeHtml(u.agency||"—")}</span>${u.city?" · "+escapeHtml(u.city):""}</div>
+            <div class="text-[11px] muted2 truncate mt-0.5"><span class="font-semibold" style="color:${ac}">${escapeHtml(agencyDisplay(u.agency)||"—")}</span>${u.city?" · "+escapeHtml(u.city):""}</div>
             ${detail}${shifts}${exp}${cv}${adminBtns}
           </div>
         </div>
@@ -3973,7 +3981,7 @@ function setTabLoading(containerId, on) {
     if (!isStaff) return;
     const psel = document.getElementById("no-partner");
     const set = new Set(); Object.values(bsUniverse || {}).forEach(u => { if (u.agency) set.add(u.agency); });
-    psel.innerHTML = '<option value="">Select partner…</option>' + [...set].sort().map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
+    psel.innerHTML = '<option value="">Select partner…</option>' + [...set].sort().map(a => `<option value="${escapeHtml(a)}">${escapeHtml(agencyDisplay(a))}</option>`).join("");
     ["no-city","no-area","no-time","no-package","no-orderid","no-notes"].forEach(id => { const el=document.getElementById(id); if(el) el.value=""; });
     document.getElementById("no-date").value = datePicker.value || todayStr();
     document.getElementById("no-modal-err").classList.add("hidden");
@@ -4369,7 +4377,7 @@ function setTabLoading(containerId, on) {
       html += `<div class="card rounded-2xl overflow-hidden mb-4">
         <div class="px-4 py-3 surface border-b brd flex items-center gap-2">
           <span class="h-3 w-3 rounded-full" style="background:${ac}"></span>
-          <span class="font-semibold">${escapeHtml(gkey)}</span>
+          <span class="font-semibold">${escapeHtml(agencyDisplay(gkey))}</span>
           <span class="text-xs muted2">${groups[gkey].length}</span></div>
         <div class="prof-group" data-group="${escapeHtml(gkey)}">`;
       groups[gkey].forEach(u => {
@@ -5670,8 +5678,8 @@ function setTabLoading(containerId, on) {
       // Role comes from the Firebase custom claim (the source of truth, set once via Cloud Shell).
       // The email list is only a fallback if no claim is present yet. This means roles are managed
       // in ONE place — the claim — with no need to edit this file when people join or leave.
-      let claimRole = null;
-      try { const _r = await user.getIdTokenResult(); claimRole = _r.claims.role || null; canPublish = (claimRole === "admin") || _r.claims.canPublish === true; }
+      let claimRole = null, claimAgency = "";
+      try { const _r = await user.getIdTokenResult(true); claimRole = _r.claims.role || null; claimAgency = _r.claims.agency || ""; canPublish = (claimRole === "admin") || _r.claims.canPublish === true; }
       catch(e){ canPublish = false; }
       currentRole = (claimRole === "admin" || claimRole === "support" || claimRole === "homecare")
         ? claimRole
@@ -5681,7 +5689,8 @@ function setTabLoading(containerId, on) {
       isHomecare = currentRole === "homecare";
       if (isAdmin) canPublish = true;
       document.body.classList.toggle("can-publish", canPublish);
-      currentAgency = isHomecare ? (HOMECARE_AGENCY[currentUserEmail.toLowerCase()] || "") : "";
+      // Agency comes from the claim (set via Cloud Shell); hardcoded map is only a fallback.
+      currentAgency = isHomecare ? (claimAgency || HOMECARE_AGENCY[currentUserEmail.toLowerCase()] || "") : "";
       document.body.classList.remove("role-admin", "role-support", "role-homecare", "viewer");
       document.body.classList.add("role-" + currentRole);
       try { buildMobileNav(); } catch(e){ console.warn("mobile nav:", e); }
@@ -5693,7 +5702,7 @@ function setTabLoading(containerId, on) {
       so.title = "Sign out (" + (user.email || "") + " · " + roleLabel + ")";
       // Header co-brand badge: homecare partners see "Valeo <> {partner}".
       { const cb = document.getElementById("cobrand-badge");
-        if (cb) { if (isHomecare && currentAgency) { cb.textContent = "Valeo \u2194 " + currentAgency; cb.classList.remove("hidden"); } else cb.classList.add("hidden"); } }
+        if (cb) { if (isHomecare && currentAgency) { cb.textContent = "Valeo \u2194 " + agencyDisplay(currentAgency); cb.classList.remove("hidden"); } else cb.classList.add("hidden"); } }
       if (isHomecare && !currentAgency) {
         // A non-staff email with no agency mapping: deny rather than leak all data.
         loginError.textContent = "This account isn't linked to a home care partner yet. Please contact Valeo ops.";
