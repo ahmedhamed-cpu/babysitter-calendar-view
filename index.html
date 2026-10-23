@@ -118,6 +118,7 @@
   }
   @keyframes cobrandPulse { 0%,100% { box-shadow:0 0 0 0 rgba(246,189,34,0.45); } 50% { box-shadow:0 0 0 6px rgba(246,189,34,0); } }
   #cobrand-badge:not(.hidden) { animation: cobrandPulse 2s ease-in-out infinite; }
+  #tkt-emoji-panel:not(.hidden) { display: grid; }   /* shown as grid only when open */
   /* Analytics: subtle lift on hover, cursor affordance, and bar hover motion */
   .an-chart { transition: transform .18s ease, box-shadow .18s ease; cursor: pointer; }
   .an-chart:hover { transform: translateY(-3px); box-shadow: 0 10px 28px rgba(0,0,0,0.18); }
@@ -406,7 +407,7 @@
       <button id="view-day" class="view-btn" data-view="day" data-active="true">Day</button>
       <button id="view-week" class="view-btn" data-view="week" data-active="false">Week</button>
       <button id="view-range" class="view-btn" data-view="range" data-active="false">Range</button>
-      <button id="view-util" class="view-btn" data-view="utilisation" data-active="false">Utilisation</button>
+      <button id="view-util" class="view-btn staff-tab-only" data-view="utilisation" data-active="false">Utilisation</button>
       <button id="view-unassigned" class="view-btn staff-tab-only" data-view="unassigned" data-active="false">Unassigned <span id="unassigned-badge" class="hidden ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full" style="background:#ef4444;color:#fff">0</span></button>
        <button id="view-compliance" class="view-btn admin-tab-only" data-view="compliance" data-active="false">Compliance</button>
       <button id="view-revenue" class="view-btn admin-tab-only" data-view="revenue" data-active="false">Revenue</button>
@@ -821,7 +822,7 @@
               <button type="button" class="tkt-fmt" data-fmt="bullet" title="Bullet list" style="width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface);font-size:13px">&#8226;</button>
               <div style="position:relative">
                 <button type="button" id="tkt-emoji-btn" title="Emoji" style="width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--surface);font-size:15px">&#128512;</button>
-                <div id="tkt-emoji-panel" class="hidden" style="position:absolute;bottom:34px;left:0;z-index:40;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.2);width:232px;display:grid;grid-template-columns:repeat(8,1fr);gap:2px"></div>
+                <div id="tkt-emoji-panel" class="hidden" style="position:absolute;bottom:34px;left:0;z-index:40;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.2);width:232px;grid-template-columns:repeat(8,1fr);gap:2px"></div>
               </div>
             </div>
             <div class="flex gap-2 items-end">
@@ -2177,7 +2178,6 @@ function setTabLoading(containerId, on) {
     const src = isHomecare
       ? query(collection(db, COLLECTION_NAME),
           where("homecare", "==", currentAgency),
-          where("subcategory", "in", ["Babysitter", "Elderly Care"]),
           where("slotDateNum", ">=", loNum), where("slotDateNum", "<=", hiNum))
       : query(collection(db, COLLECTION_NAME),
           where("slotDateNum", ">=", loNum), where("slotDateNum", "<=", hiNum));
@@ -4867,7 +4867,7 @@ function setTabLoading(containerId, on) {
   function shiftDate(delta) { const d = new Date(datePicker.value+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+(viewMode==="week"?delta*7:delta)); datePicker.value = dateKey(d); renderGrid(); }
 
    function setView(mode) {
-    if (isHomecare && !["day","week","range","utilisation","tickets","neworders"].includes(mode)) mode = "day";      // homecare partners
+    if (isHomecare && !["day","week","range","tickets","neworders"].includes(mode)) mode = "day";      // homecare partners
     if (!isAdmin && ["compliance","revenue","activity","analytics","profiles","incentives"].includes(mode)) mode = "day";
     if (!isStaff && mode === "requests") mode = "day";
     if (!isStaff && mode === "available") mode = "day";
@@ -5474,8 +5474,7 @@ function setTabLoading(containerId, on) {
     // parseSlotDateTime(bookedSlotDate) — robust to any slotDateNum/timestamp issue.
     const bookingsSource = isHomecare
       ? query(collection(db, COLLECTION_NAME),
-          where("homecare", "==", currentAgency),
-          where("subcategory", "in", ["Babysitter", "Elderly Care"]))
+          where("homecare", "==", currentAgency))
       : collection(db, COLLECTION_NAME);
 
     onSnapshot(bookingsSource, (snapshot) => {
