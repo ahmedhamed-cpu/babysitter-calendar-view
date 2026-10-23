@@ -4244,7 +4244,7 @@ function setTabLoading(containerId, on) {
   // ---------- BABYSITTER PROFILES ----------
   // ===================== PUBLIC PROFILE BRIDGE (admin) =====================
   // Publishes ONLY safe fields into publicProfiles; generates a shareable link.
-  const PUBLIC_PROFILE_BASE = "https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO/valeo-profiles.html"; // GitHub Pages URL — set username/repo
+  const PUBLIC_PROFILE_BASE = "https://ops.feelvaleo.com/caregivers.html"; // hosted public caregiver gallery
   const pubSlugify = n => "bs_" + String(n||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,60);
   let pubCurrentId = null;
 
